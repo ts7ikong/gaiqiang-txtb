@@ -383,12 +383,18 @@
 
       const isPrice = v => typeof v === 'string' && /^\d+(?:\.\d+)?w$/i.test(v);
       const isAmmo = v => typeof v === 'string' && /^\d+(?:\+\d+)?发$/.test(v);
-      const isIdNum = v => typeof v === 'number' && Number.isInteger(v) && v >= 1000 && v <= 999999;
+      // 兼容数字型（double）和文本型（"1001"）ID
+      const isIdNum = v =>
+        (typeof v === 'number' && Number.isInteger(v) && v >= 1000 && v <= 999999) ||
+        (typeof v === 'string' && /^\d{4,6}$/.test(v));
       const isFov = v => typeof v === 'string' && /^(通用|固定FOV|任意FOV|FOV任意|默认)$/.test(v);
       const isNoise = v => {
         if (typeof v === 'number') return false;
         const s = String(v || '');
-        return !s || /^\d+(?:\.\d+)?$/.test(s) || /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}/.test(s);
+        if (!s) return true;
+        // 4-6 位纯整数可能是 ID，不过滤
+        if (/^\d{4,6}$/.test(s)) return false;
+        return /^\d+(?:\.\d+)?$/.test(s) || /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}/.test(s);
       };
       const clean = v => typeof v === 'string' ? cleanSequenceText(v) : v;
 
@@ -402,14 +408,19 @@
         let fov = strings.find(isFov) || '';
 
         // ID 通常出现在备注/图片相关字段之后、FOV 附近。
-        // 优先选择位于 FOV 前面的 4~6 位整数；没有 FOV 时取最后一个合理整数。
+        // 优先选择位于 FOV 前面的 4~6 位整数；没有 FOV 时取全序列末尾两个。
+        // isIdNum 同时识别数字型（double）和文本型（"1001"）存储，isNoise 也放行了 4-6 位整数。
         const fovIndex = fov ? vals.lastIndexOf(fov) : vals.length;
-        const beforeFovNums = vals
+        const beforeFovIds = vals
           .slice(0, fovIndex)
           .map((v, i) => ({ v, i }))
           .filter(x => isIdNum(x.v));
-        const gunIdObj = beforeFovNums.length ? beforeFovNums[beforeFovNums.length - 1] : null;
+        // 取倒数两个：最后一个之前的是 gunId，最后一个是 specialGunId（列顺序：...ID, 特殊ID, FOV）
+        const idCount = beforeFovIds.length;
+        const gunIdObj  = idCount >= 2 ? beforeFovIds[idCount - 2] : (idCount === 1 ? beforeFovIds[0] : null);
+        const specIdObj = idCount >= 2 ? beforeFovIds[idCount - 1] : null;
         const gunId = gunIdObj ? String(gunIdObj.v) : '';
+        const specialGunId = specIdObj ? String(specIdObj.v) : '';
 
         // 业务顺序：价格 -> 镜子 -> 弹夹 -> 图片/对象 -> 备注 -> ID -> FOV。
         // 图片没有可读叶子，因此剩下的短文本按顺序恢复镜子/备注。
@@ -420,8 +431,8 @@
             if (v === price) started = true;
             continue;
           }
-          if (v === ammo || v === gunIdObj?.v || v === fov) continue;
-          if (typeof v === 'string' && !isPrice(v) && !isAmmo(v) && !isFov(v)) afterPrice.push(v);
+          if (v === ammo || v === gunIdObj?.v || v === specIdObj?.v || v === fov) continue;
+          if (typeof v === 'string' && !isPrice(v) && !isAmmo(v) && !isFov(v) && !isIdNum(v)) afterPrice.push(v);
         }
 
         // 第一段短文本通常是镜子，第二段通常是备注；如果只有一段，结合
@@ -453,7 +464,7 @@
           note,
           date: '',
           gunId,
-          specialGunId: '',
+          specialGunId,
           fov,
           precision: '',
           sheet: sheetName
