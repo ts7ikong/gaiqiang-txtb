@@ -13,7 +13,7 @@ try {
 }
 
 Write-Host "========================================"
-Write-Host "  魔王S 改枪码查询 v8.3.19 - 服务已启动"
+Write-Host "  魔王S 改枪码查询 v8.4.0 - 服务已启动"
 Write-Host "  http://localhost:8080/gun_search.html"
 Write-Host "  关闭此窗口即可停止服务"
 Write-Host "========================================"
@@ -399,7 +399,7 @@ while ($listener.IsListening) {
 
     # API: 服务健康检查
     if ($path -eq "/api/health" -and $method -eq "GET") {
-        Send-Response $ctx 200 "application/json; charset=utf-8" '{"ok":true,"version":"8.3.19"}'
+        Send-Response $ctx 200 "application/json; charset=utf-8" '{"ok":true,"version":"8.4.0"}'
         continue
     }
 
