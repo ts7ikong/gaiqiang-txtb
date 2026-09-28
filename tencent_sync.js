@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.9
+ * 魔王S 腾讯文档同步助手 v9.0.10
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -419,8 +419,12 @@
           .slice(0, fovIndex)
           .map((v, i) => ({ v, i }))
           .filter(x => isIdNum(x.v));
-        const gunIdObj = beforeFovNums.length ? beforeFovNums[beforeFovNums.length - 1] : null;
+        // 列顺序：...ID → 特殊ID → FOV；取倒数两个，倒数第二是 gunId，倒数第一是 specialId
+        const idCount = beforeFovNums.length;
+        const gunIdObj  = idCount >= 2 ? beforeFovNums[idCount - 2] : (idCount === 1 ? beforeFovNums[0] : null);
+        const specIdObj = idCount >= 2 ? beforeFovNums[idCount - 1] : null;
         const gunId = gunIdObj ? String(gunIdObj.v) : '';
+        const specialGunId = specIdObj ? String(specIdObj.v) : '';
 
         // 业务顺序：价格 -> 镜子 -> 弹夹 -> 图片/对象 -> 备注 -> ID -> FOV。
         // 图片没有可读叶子，因此剩下的短文本按顺序恢复镜子/备注。
@@ -431,7 +435,7 @@
             if (v === price) started = true;
             continue;
           }
-          if (v === ammo || v === gunIdObj?.v || v === fov) continue;
+          if (v === ammo || v === gunIdObj?.v || v === specIdObj?.v || v === fov) continue;
           if (typeof v === 'string' && !isPrice(v) && !isAmmo(v) && !isFov(v)) afterPrice.push(v);
         }
 
@@ -464,7 +468,7 @@
           note,
           date: '',
           gunId,
-          specialGunId: '',
+          specialGunId,
           fov: fov || (/S11\s*烽火地带|S11烽火地带/.test(sheetName || '') ? '通用' : ''),
           precision: '',
           sheet: sheetName
@@ -652,7 +656,7 @@
     return;
   }
 
-  const VERSION = '9.0.9';
+  const VERSION = '9.0.10';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
@@ -816,7 +820,7 @@
 
   // S11 的 ID(网址使用) 是 fixed64 double，不一定紧跟表头文本，
   // 也不一定符合旧版“09 + 8字节连续数组”的布局。
-  // v9.0.9：递归收集所有 fixed64 数字叶子，再寻找“连续的 4 位整数序列”。
+  // v9.0.10：递归收集所有 fixed64 数字叶子，再寻找“连续的 4 位整数序列”。
   // 这是针对当前 S11 结构的 ID 候选恢复，不把普通文本数字误当 ID。
   function extractIdColumn(rawParts, maxCount) {
     const nums = [];
