@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.5
+ * 魔王S 腾讯文档同步助手 v9.0.6
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -652,7 +652,7 @@
     return;
   }
 
-  const VERSION = '9.0.5';
+  const VERSION = '9.0.6';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
