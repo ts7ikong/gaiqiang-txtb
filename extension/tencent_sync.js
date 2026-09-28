@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.6
+ * 魔王S 腾讯文档同步助手 v9.0.8
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -383,23 +383,28 @@
 
       const isPrice = v => typeof v === 'string' && /^\d+(?:\.\d+)?w$/i.test(v);
       const isAmmo = v => typeof v === 'string' && /^\d+(?:\+\d+)?发$/.test(v);
-      // 兼容数字型（double）和文本型（"1001"）ID
-      const isIdNum = v =>
-        (typeof v === 'number' && Number.isInteger(v) && v >= 1000 && v <= 999999) ||
-        (typeof v === 'string' && /^\d{4,6}$/.test(v));
+      const isIdNum = v => typeof v === 'number' && Number.isInteger(v) && v >= 1000 && v <= 999999;
       const isFov = v => typeof v === 'string' && /^(通用|固定FOV|任意FOV|FOV任意|默认)$/.test(v);
       const isNoise = v => {
         if (typeof v === 'number') return false;
         const s = String(v || '');
-        if (!s) return true;
-        // 4-6 位纯整数可能是 ID，不过滤
-        if (/^\d{4,6}$/.test(s)) return false;
-        return /^\d+(?:\.\d+)?$/.test(s) || /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}/.test(s);
+        return !s || /^\d+(?:\.\d+)?$/.test(s) || /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}/.test(s);
       };
       const clean = v => typeof v === 'string' ? cleanSequenceText(v) : v;
 
+      function normalizeGunCode(code) {
+        const m = CODE_RE.exec(String(code || ''));
+        CODE_RE.lastIndex = 0;
+        if (!m) return String(code || '').trim();
+        // 腾讯当前 S11 叶子文本把行/富文本标记中的数字前缀也带进了枪名，
+        // 例如“5汤姆逊…”、“2MDR…”。这些不是游戏内枪名，剥掉前导数字。
+        const gunName = String(m[1] || '').replace(/^\d+(?=[\u4e00-\u9fffA-Za-z])/, '').trim();
+        return `${gunName}-${m[2]}-${m[3]}`;
+      }
+
       function buildRecord(c) {
         if (!c || !c.code) return null;
+        const normalizedCode = normalizeGunCode(c.code);
         const vals = c.values.map(clean).filter(v => !isNoise(v));
         const strings = vals.filter(v => typeof v === 'string' && v.length > 0);
 
@@ -408,19 +413,14 @@
         let fov = strings.find(isFov) || '';
 
         // ID 通常出现在备注/图片相关字段之后、FOV 附近。
-        // 优先选择位于 FOV 前面的 4~6 位整数；没有 FOV 时取全序列末尾两个。
-        // isIdNum 同时识别数字型（double）和文本型（"1001"）存储，isNoise 也放行了 4-6 位整数。
+        // 优先选择位于 FOV 前面的 4~6 位整数；没有 FOV 时取最后一个合理整数。
         const fovIndex = fov ? vals.lastIndexOf(fov) : vals.length;
-        const beforeFovIds = vals
+        const beforeFovNums = vals
           .slice(0, fovIndex)
           .map((v, i) => ({ v, i }))
           .filter(x => isIdNum(x.v));
-        // 取倒数两个：最后一个之前的是 gunId，最后一个是 specialGunId（列顺序：...ID, 特殊ID, FOV）
-        const idCount = beforeFovIds.length;
-        const gunIdObj  = idCount >= 2 ? beforeFovIds[idCount - 2] : (idCount === 1 ? beforeFovIds[0] : null);
-        const specIdObj = idCount >= 2 ? beforeFovIds[idCount - 1] : null;
+        const gunIdObj = beforeFovNums.length ? beforeFovNums[beforeFovNums.length - 1] : null;
         const gunId = gunIdObj ? String(gunIdObj.v) : '';
-        const specialGunId = specIdObj ? String(specIdObj.v) : '';
 
         // 业务顺序：价格 -> 镜子 -> 弹夹 -> 图片/对象 -> 备注 -> ID -> FOV。
         // 图片没有可读叶子，因此剩下的短文本按顺序恢复镜子/备注。
@@ -431,8 +431,8 @@
             if (v === price) started = true;
             continue;
           }
-          if (v === ammo || v === gunIdObj?.v || v === specIdObj?.v || v === fov) continue;
-          if (typeof v === 'string' && !isPrice(v) && !isAmmo(v) && !isFov(v) && !isIdNum(v)) afterPrice.push(v);
+          if (v === ammo || v === gunIdObj?.v || v === fov) continue;
+          if (typeof v === 'string' && !isPrice(v) && !isAmmo(v) && !isFov(v)) afterPrice.push(v);
         }
 
         // 第一段短文本通常是镜子，第二段通常是备注；如果只有一段，结合
@@ -448,14 +448,14 @@
         if (!note && afterPrice.length >= 2) note = afterPrice[afterPrice.length - 1];
         if (!note && afterPrice.length === 1 && !scope) note = afterPrice[0];
 
-        const m = CODE_RE.exec(c.code);
+        const m = CODE_RE.exec(normalizedCode);
         CODE_RE.lastIndex = 0;
         return {
           row: c.index,
-          code: c.code,
-          gunNameRaw: m ? m[1].replace(/^\d+/, '').trim() : '',
+          code: normalizedCode,
+          gunNameRaw: m ? m[1].trim() : '',
           mode: m ? m[2] : inferMode(sheetName),
-          category: c.category || category,
+          category: /S11\s*烽火地带|S11烽火地带/.test(sheetName || '') ? '' : (c.category || category),
           price,
           scope,
           ammo,
@@ -464,8 +464,8 @@
           note,
           date: '',
           gunId,
-          specialGunId,
-          fov,
+          specialGunId: '',
+          fov: fov || (/S11\s*烽火地带|S11烽火地带/.test(sheetName || '') ? '通用' : ''),
           precision: '',
           sheet: sheetName
         };
@@ -652,7 +652,7 @@
     return;
   }
 
-  const VERSION = '9.0.6';
+  const VERSION = '9.0.8';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
@@ -814,6 +814,61 @@
     setStatus(`找到 ${state.sheets.length} 个 Sheet，默认选中当前 Sheet`);
   }
 
+  // S11 的 ID(网址使用) 是 fixed64 double，不一定紧跟表头文本，
+  // 也不一定符合旧版“09 + 8字节连续数组”的布局。
+  // v9.0.8：递归收集所有 fixed64 数字叶子，再寻找“连续的 4 位整数序列”。
+  // 这是针对当前 S11 结构的 ID 候选恢复，不把普通文本数字误当 ID。
+  function extractIdColumn(rawParts, maxCount) {
+    const nums = [];
+    function walk(buf, depth = 0) {
+      if (!buf || !buf.length || depth > 40) return;
+      let fs;
+      try { fs = Parser.readFields(buf); } catch { return; }
+      for (const f of fs) {
+        if (f.wire === 1 && f.bytes?.length === 8) {
+          try {
+            const v = new DataView(f.bytes.buffer, f.bytes.byteOffset, 8).getFloat64(0, true);
+            if (Number.isFinite(v)) nums.push(v);
+          } catch {}
+        } else if (f.wire === 2 && f.bytes?.length) {
+          walk(f.bytes, depth + 1);
+        }
+      }
+    }
+    for (const raw of rawParts) walk(raw);
+
+    // ID(网址使用) 当前是 4 位整数；排除日期、坐标、比例等常见数字。
+    const ints = nums.map((v, i) => ({ v: Math.round(v), raw: v, i }))
+      .filter(x => Math.abs(x.raw - x.v) < 1e-9 && x.v >= 1000 && x.v <= 9999);
+
+    // 计算候选连续段。允许中间夹少量非 ID 数字，但不能跨太大的间隔。
+    const runs = [];
+    let run = [];
+    for (let i = 0; i < ints.length; i++) {
+      if (!run.length) { run = [ints[i]]; continue; }
+      const gap = ints[i].i - run[run.length - 1].i;
+      if (gap <= 4) run.push(ints[i]);
+      else {
+        if (run.length >= 2) runs.push(run);
+        run = [ints[i]];
+      }
+    }
+    if (run.length >= 2) runs.push(run);
+
+    // 优先长度，其次优先更像“控枪编号”的 7xxx/6xxx 数字段。
+    runs.sort((a, b) => {
+      const score = r => r.length * 100 + r.filter(x => x.v >= 6000 && x.v <= 9999).length;
+      return score(b) - score(a);
+    });
+    const best = runs[0] || [];
+    const ids = [];
+    for (const x of best) {
+      if (!ids.length || ids[ids.length - 1] !== String(x.v)) ids.push(String(x.v));
+      if (ids.length >= maxCount) break;
+    }
+    return ids;
+  }
+
   /** 读取一个 Sheet：分段拉取 -> 解压 -> protobuf 网格 -> 业务记录 */
   async function loadSheet(sheet) {
     const firstResp = await getJSON(makeUrl(sheet.id, 0, 255));
@@ -848,6 +903,19 @@
     if (!records.length) {
       records = Parser.textFallback(texts.join('\n'), sheet.name);
       strategy = 'text';
+    }
+
+    // S11 当前表的 ID 列是独立的 fixed64 数字列，不在文本叶子序列中。
+    // 只在业务记录已经按代码顺序恢复后回填，避免再次把其它数字字段误当 ID。
+    if (records.length && /S11\s*烽火地带|S11烽火地带/.test(sheet.name || '')) {
+      try {
+        const ids = extractIdColumn(raws, records.length);
+        for (let i = 0; i < records.length && i < ids.length; i++) {
+          if (!records[i].gunId && /^\d{4}$/.test(String(ids[i] || ''))) records[i].gunId = String(ids[i]);
+        }
+      } catch (e) {
+        console.warn('[魔王S] ID 列解析失败', e);
+      }
     }
     return { records, grid, maxRow, blocks: blobs.size, cells, errors, strategy, sequenceValues };
   }
