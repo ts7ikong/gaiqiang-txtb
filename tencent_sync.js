@@ -1,11 +1,22 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.0
+ * 魔王S 腾讯文档同步助手 v9.0.3
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
- *   根 1 -> 5 -> 19 为表体；表体中 5=值池，6=单元格(重复)
- *   值池：1=字符串 {1:string}，3=数字 {1:fixed64 double}
- *   单元格：1=行(0 时省略) 2=列(0 时省略) 3=内容 {1:类型(4文本/2数字), 2:{1:值索引(0 时省略)}}
+ *   根(field=1)下有几十个 field=5 块混在一起（sheet 元信息、样式定义、字段 UUID、数据主体……），
+ *   要看每个块内部的 field=1 类型码来区分；数据主体的类型码固定是 18，表体是它的 field=19。
+ *   取第一个匹配字段号是不够的——第一个 field=5 通常是 114 字节的 sheet 元信息块，不含 field=19。
+ *   表体中 5=值池，6=单元格(重复)
+ *   值池：1=字符串 {1:string}，2=富文本(带颜色/字体等格式的文字，需要递归拼出纯文本)，
+ *        3=数字 {1:fixed64 double}（物理顺序：字符串在前，其次富文本，数字在最后）
+ *   单元格：1=行(0 时省略) 2=列(0 时省略) 3=内容 {1:类型(4文本/2数字/6富文本), 2:{1:值索引(0 时省略)}}
+ *   列号是真正的 0-based 绝对列号，不是"名称固定排最后一列"那种编排——第 0 列就是改枪码/武器名。
+ *   数字索引不是从 0 开始的独立编号：块内出现的最大索引值对应数字池最后一个元素，
+ *   偏移量 = 最大索引 - 池长度 + 1；小于这个偏移量的索引其实是直接内嵌的字面值（如 "94" 这种
+ *   不值得去重的小 ID），不能一律当成"索引"处理，也不能用块内最小值来归零（字面值会拉低最小值）。
+ *   v9.0.3 修复：body 定位错误导致解析器实际上永远返回 0 个单元格（只是被 sequenceFallback
+ *   兜底逻辑掩盖了）；数字索引改用最大值反推偏移；新增 type=6 富文本解析（表头首列"改枪码"用的
+ *   就是这个类型，之前完全读不到）。
  *
  * 不读取、不上传 Cookie；请求使用当前腾讯文档页面的登录态。
  */
@@ -77,28 +88,78 @@
     // ---------- 数据块 -> 网格 ----------
 
     /**
+     * root(field=1) 下有多个 field=5 块（sheet 元信息、样式定义、字段 UUID、数据主体等），
+     * 靠内部 field=1 的类型码区分；数据主体的类型码固定为 18，取其 field=19 作为 body。
+     * first() 只取"第一个"匹配号的 bytes 是不够的——第一个 field=5 通常是元信息块，不含 field=19。
+     */
+    function findBody(raw) {
+      const root = first(raw, 1);
+      if (!root) return null;
+      for (const f of readFields(root)) {
+        if (f.no !== 5 || !f.bytes) continue;
+        if (firstVarint(f.bytes, 1) === 18) return first(f.bytes, 19);
+      }
+      return null;
+    }
+
+    const NOISE_TEXT = new Set(['SimHei', 'Microsoft YaHei', 'BB08J2']);
+
+    /** 富文本（带颜色/字体等格式的 run）不是纯字符串，要递归找出里面所有可读的 UTF-8 片段拼接还原 */
+    function extractRichText(bytes) {
+      let out = '';
+      function walk(buf, depth) {
+        if (depth > 15 || !buf || !buf.length) return;
+        let fields;
+        try { fields = readFields(buf); } catch { return; }
+        for (const f of fields) {
+          if (f.wire !== 2 || !f.bytes) continue;
+          let s = null;
+          try { s = td.decode(f.bytes); } catch { /* 不是合法 UTF-8，当子消息继续递归 */ }
+          if (s !== null && looksLikeCleanText(s)) { out += s; continue; }
+          walk(f.bytes, depth + 1);
+        }
+      }
+      walk(bytes, 0);
+      return out;
+    }
+
+    function looksLikeCleanText(s) {
+      if (!s) return false;
+      let ctrl = 0;
+      for (const ch of s) if (ch.charCodeAt(0) < 32) ctrl++;
+      if (ctrl / s.length > 0.15) return false;
+      if (NOISE_TEXT.has(s.trim())) return false;
+      if (/^\*?[\x00-\x1f]*FF[0-9A-Fa-f]{6}/.test(s)) return false;
+      return true;
+    }
+
+    /**
      * 解析一个解压后的 related_sheet，把值写入 grid(Map<row, Map<col, value>>)
      * 返回写入的单元格数量
      */
     function parseBlock(raw, grid) {
-      const body = first(first(first(raw, 1), 5), 19);
+      const body = findBody(raw);
       if (!body) return 0;
 
-      // 值池：字符串和数字分两个列表
-      const strs = [], nums = [];
+      // 值池：字符串、数字、富文本三个列表（物理顺序：先字符串，再富文本，再数字——各自独立编号）
+      const strs = [], nums = [], richTexts = [];
       const pool = first(body, 5);
       if (pool) {
         for (const f of readFields(pool)) {
           if (!f.bytes) continue;
-          const v = first(f.bytes, 1);
-          if (f.no === 1) strs.push(v ? td.decode(v) : '');
-          if (f.no === 3) nums.push(v && v.length === 8 ? new DataView(v.buffer, v.byteOffset, 8).getFloat64(0, true) : 0);
+          if (f.no === 1) { const v = first(f.bytes, 1); strs.push(v ? td.decode(v) : ''); }
+          else if (f.no === 3) {
+            const v = first(f.bytes, 1);
+            nums.push(v && v.length === 8 ? new DataView(v.buffer, v.byteOffset, 8).getFloat64(0, true) : 0);
+          } else if (f.no === 2) {
+            richTexts.push(extractRichText(f.bytes));
+          }
         }
       }
 
       // 先收集单元格引用，再统一换算数字索引
       const refs = [];
-      let minNumIdx = Infinity;
+      let maxNumIdx = -Infinity;
       for (const cf of readFields(body)) {
         if (cf.no !== 6 || !cf.bytes) continue;
         let row = 0, col = 0, content = null;
@@ -117,9 +178,14 @@
           }
         }
         if (idx < 0) continue;                  // 只有样式没有值
-        if (type === 2) minNumIdx = Math.min(minNumIdx, idx);
+        if (type === 2) maxNumIdx = Math.max(maxNumIdx, idx);
         refs.push([row, col, type, idx]);
       }
+
+      // 数字池不是从 0 开始独立编号的：块内出现的最大 idx 对应数字池最后一个元素，
+      // 偏移量 = 最大 idx - 池长度 + 1。小于这个偏移量的 idx 不是索引，是直接内嵌的字面值
+      // （例如 "94" 这种较小的 ID，不值得放进池里去重）。用最小值归零在字面值和索引混杂时会算错。
+      const numOffset = nums.length ? maxNumIdx - nums.length + 1 : 0;
 
       let count = 0;
       for (const [row, col, type, idx] of refs) {
@@ -127,8 +193,14 @@
         if (type === 4) {
           val = idx < strs.length ? strs[idx] : null;          // 文本索引从 0 开始
         } else if (type === 2) {
-          const i = idx - minNumIdx;                          // 数字索引带偏移，按块内最小值归零
-          val = i >= 0 && i < nums.length ? nums[i] : null;
+          if (idx >= numOffset) {
+            const i = idx - numOffset;
+            val = i >= 0 && i < nums.length ? nums[i] : null;
+          } else {
+            val = idx;                                          // 直接字面值，不走池化
+          }
+        } else if (type === 6) {
+          val = idx < richTexts.length ? richTexts[idx] : null; // 富文本索引（带格式的文字，如表头首列）
         }
         if (val == null) continue;
         if (!grid.has(row)) grid.set(row, new Map());
@@ -430,7 +502,7 @@
     return;
   }
 
-  const VERSION = '9.0.2';
+  const VERSION = '9.0.3';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
@@ -615,12 +687,6 @@
     let records = Parser.gridToRecords(grid, sheet.name);
     let strategy = 'protobuf-grid';
     let sequenceValues = 0;
-    if (!records.length) {
-      // 新版 related_sheet：先用递归 Protobuf 叶子序列恢复“改枪码→价格→弹夹→备注”。
-      const seq = Parser.sequenceFallback([...blobs].map(b64 => null), sheet.name);
-      // 上面不能直接把 Base64 当 raw，因此实际序列恢复在下方重新读取 raw。
-      records = [];
-    }
     if (!records.length) {
       // 重新解压，走结构自适应序列解析；不依赖固定 field 号。
       const raws = [];
