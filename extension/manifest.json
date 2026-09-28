@@ -1,0 +1,28 @@
+﻿{
+  "manifest_version": 3,
+  "name": "魔王S腾讯文档同步助手",
+  "version": "8.3.19",
+  "description": "从腾讯文档同步魔王S改枪码，解析普通压枪ID并按游戏模式分层存储腾讯同步数据",
+  "permissions": [
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://docs.qq.com/*",
+    "http://localhost:8080/*"
+  ],
+  "action": {
+    "default_title": "魔王S腾讯文档同步助手"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://docs.qq.com/*"
+      ],
+      "js": [
+        "tencent_sync.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
