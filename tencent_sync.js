@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.8
+ * 魔王S 腾讯文档同步助手 v9.0.9
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -591,7 +591,7 @@
         const row = {
           row: out.length,
           code,
-          gunNameRaw: m[1].replace(/^\\d+/, '').trim(),
+          gunNameRaw: m[1].replace(/^\d+(?=[一-鿿A-Za-z])/, '').trim(),
           mode: m[2] || inferMode(sheetName),
           category: '',
           price: valueAt(i + 1),
@@ -652,7 +652,7 @@
     return;
   }
 
-  const VERSION = '9.0.8';
+  const VERSION = '9.0.9';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
@@ -816,7 +816,7 @@
 
   // S11 的 ID(网址使用) 是 fixed64 double，不一定紧跟表头文本，
   // 也不一定符合旧版“09 + 8字节连续数组”的布局。
-  // v9.0.8：递归收集所有 fixed64 数字叶子，再寻找“连续的 4 位整数序列”。
+  // v9.0.9：递归收集所有 fixed64 数字叶子，再寻找“连续的 4 位整数序列”。
   // 这是针对当前 S11 结构的 ID 候选恢复，不把普通文本数字误当 ID。
   function extractIdColumn(rawParts, maxCount) {
     const nums = [];
