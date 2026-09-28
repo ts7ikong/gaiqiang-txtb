@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.10
+ * 魔王S 腾讯文档同步助手 v9.0.11
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -656,7 +656,7 @@
     return;
   }
 
-  const VERSION = '9.0.10';
+  const VERSION = '9.0.11';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
@@ -875,53 +875,102 @@
 
   /** 读取一个 Sheet：分段拉取 -> 解压 -> protobuf 网格 -> 业务记录 */
   async function loadSheet(sheet) {
+    const steps = [];
+
+    // ── 步骤1：API 拉取 ──────────────────────────────────────────
+    steps.push('── 步骤1：API 拉取 ──');
     const firstResp = await getJSON(makeUrl(sheet.id, 0, 255));
     const maxRow = Number(getVars(firstResp).maxRow ?? 0);
     const blobs = collectRelatedSheets(firstResp, new Set());
+    let fetchCount = 1;
     for (let s = 256; s <= maxRow; s += 256) {
       collectRelatedSheets(await getJSON(makeUrl(sheet.id, s, Math.min(s + 255, maxRow))), blobs);
+      fetchCount++;
     }
+    steps.push(`  maxRow=${maxRow}，分段请求=${fetchCount}次，related_sheet块数=${blobs.size}`);
 
+    // ── 步骤2：解压 inflate ──────────────────────────────────────
+    steps.push('── 步骤2：解压（inflate）──');
     const grid = new Map();
     const texts = [];
     const raws = [];
     const td = new TextDecoder('utf-8');
-    let cells = 0, errors = 0;
+    let errors = 0;
+    let bi = 0;
     for (const b64 of blobs) {
+      bi++;
       const raw = await inflate(b64);
       raws.push(raw);
-      try { cells += Parser.parseBlock(raw, grid); }
-      catch (e) { errors++; console.warn('[魔王S] 数据块解析失败', e); }
       texts.push(td.decode(raw));
+      steps.push(`  块${bi}：Base64=${b64.length}字符 → 解压后=${raw.length}字节`);
     }
 
+    // ── 步骤3：parseBlock（protobuf 网格）───────────────────────
+    steps.push('── 步骤3：parseBlock（protobuf 网格）──');
+    let cells = 0;
+    for (let i = 0; i < raws.length; i++) {
+      const before = cells;
+      try { cells += Parser.parseBlock(raws[i], grid); }
+      catch (e) { errors++; steps.push(`  块${i+1}：解析异常 ${e.message}`); console.warn('[魔王S] 数据块解析失败', e); }
+      steps.push(`  块${i+1}：+${cells - before}单元格（累计 ${cells}）`);
+    }
+    steps.push(`  网格总行数=${grid.size}，总单元格=${cells}`);
+
+    // ── 步骤4：记录解析 ──────────────────────────────────────────
+    steps.push('── 步骤4：记录解析 ──');
     let records = Parser.gridToRecords(grid, sheet.name);
-    let strategy = records.length ? 'protobuf-grid' : 'protobuf-grid-empty';
+    let strategy = 'grid';
     let sequenceValues = 0;
-    if (!records.length) {
-      const seq = Parser.sequenceFallback(raws, sheet.name);
-      records = seq.records;
-      sequenceValues = seq.sequence;
-      strategy = records.length ? 'protobuf-sequence' : 'text';
-    }
-    if (!records.length) {
-      records = Parser.textFallback(texts.join('\n'), sheet.name);
-      strategy = 'text';
+    if (records.length) {
+      steps.push(`  路径=grid，改枪码=${records.length}条`);
+    } else {
+      steps.push(`  grid 路径：0条（cells=${cells}），尝试下一路径`);
+      // S11 专用扁平列解析
+      if (/S11\s*烽火地带|S11烽火地带/.test(sheet.name || '')) {
+        const col = Parser.columnRecordFallback(raws, sheet.name);
+        steps.push(`  路径=columnRecord（S11专用）：cells=${col.cells}，记录=${col.records.length}条` +
+          (col.candidatePath ? `，候选路径=${JSON.stringify(col.candidatePath)} field=${col.candidateField}` : ''));
+        if (col.records.length) {
+          records = col.records;
+          cells = col.cells;
+          strategy = 'column';
+        }
+      }
+      if (!records.length) {
+        const seq = Parser.sequenceFallback(raws, sheet.name);
+        sequenceValues = seq.sequence;
+        steps.push(`  路径=sequence：叶子值=${seq.sequence}，记录=${seq.records.length}条`);
+        if (seq.records.length) { records = seq.records; strategy = 'sequence'; }
+      }
+      if (!records.length) {
+        records = Parser.textFallback(texts.join('\n'), sheet.name);
+        steps.push(`  路径=text（兜底）：记录=${records.length}条`);
+        strategy = 'text';
+      }
     }
 
-    // S11 当前表的 ID 列是独立的 fixed64 数字列，不在文本叶子序列中。
-    // 只在业务记录已经按代码顺序恢复后回填，避免再次把其它数字字段误当 ID。
+    // ── 步骤5：S11 ID 回填 ───────────────────────────────────────
     if (records.length && /S11\s*烽火地带|S11烽火地带/.test(sheet.name || '')) {
+      steps.push('── 步骤5：S11 ID 回填（extractIdColumn）──');
       try {
         const ids = extractIdColumn(raws, records.length);
+        steps.push(`  fixed64 4位整数序列长度=${ids.length}`);
+        let filled = 0;
         for (let i = 0; i < records.length && i < ids.length; i++) {
-          if (!records[i].gunId && /^\d{4}$/.test(String(ids[i] || ''))) records[i].gunId = String(ids[i]);
+          if (!records[i].gunId && /^\d{4}$/.test(String(ids[i] || ''))) {
+            records[i].gunId = String(ids[i]);
+            filled++;
+          }
         }
+        steps.push(`  回填 gunId=${filled}条（前5个ID: ${ids.slice(0, 5).join(', ')}）`);
       } catch (e) {
+        steps.push(`  ID回填失败: ${e.message}`);
         console.warn('[魔王S] ID 列解析失败', e);
       }
     }
-    return { records, grid, maxRow, blocks: blobs.size, cells, errors, strategy, sequenceValues };
+
+    steps.push(`── 最终结果：strategy=${strategy}，改枪码=${records.length}条 ──`);
+    return { records, grid, maxRow, blocks: blobs.size, cells, errors, strategy, sequenceValues, steps };
   }
 
   /** 按模式分组推送，一个 Sheet 里混了多个模式也能落到正确目录 */
