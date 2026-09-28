@@ -337,16 +337,32 @@
       const flush = () => {
         if (!current) return;
         if (!current.price && current.values.length) {
-          const price = current.values.find(v => typeof v === 'string' && /^\d+(?:\.\d+)?w$/i.test(v));
+          // 先严格匹配纯价格字符串，再宽松提取（价格与备注混在同一字符串时）
+          let price = current.values.find(v => typeof v === 'string' && /^\d+(?:\.\d+)?w$/i.test(v));
+          if (!price) {
+            for (const v of current.values) {
+              if (typeof v !== 'string') continue;
+              const pm = v.match(/(\d+(?:\.\d+)?w)\b/i);
+              if (pm) { price = pm[1]; break; }
+            }
+          }
           if (price) current.price = price;
         }
         if (!current.ammo && current.values.length) {
-          const ammo = current.values.find(v => typeof v === 'string' && /^\d+(?:\+\d+)?发$/.test(v));
+          let ammo = current.values.find(v => typeof v === 'string' && /^\d+(?:\+\d+)?发$/.test(v));
+          if (!ammo) {
+            for (const v of current.values) {
+              if (typeof v !== 'string') continue;
+              const am = v.match(/(\d+(?:\+\d+)?发)/);
+              if (am) { ammo = am[1]; break; }
+            }
+          }
           if (ammo) current.ammo = ammo;
         }
         if (!current.note && current.values.length) {
-          const note = current.values.find(v => typeof v === 'string' && v !== current.price && v !== current.ammo && v.length <= 300);
-          if (note) current.note = note;
+          // 收集所有非价格/弹夹的文本（可能有多列：如"镜子"+"备注"），合并后不丢字段
+          const parts = current.values.filter(v => typeof v === 'string' && v !== current.price && v !== current.ammo && v.length <= 300);
+          if (parts.length) current.note = parts.join(' ').slice(0, 300);
         }
         const code = current.code;
         if (code && !seen.has(code)) {
@@ -372,11 +388,25 @@
         const item = seq[i];
         const raw = item.type === 'text' ? cleanSequenceText(item.value) : item.value;
         if (item.type === 'text') {
-          const m = CODE_RE.exec(raw);
-          if (m) {
-            flush();
-            const code = m[0].trim();
-            current = { index: codeCount++, code, values: [], price: '', ammo: '', note: '' };
+          // 用全局正则扫出同一节点里所有改枪码（一个叶子可能含多条记录或代码+价格+备注）
+          const re = new RegExp(CODE_RE.source, 'g');
+          const codeMatches = [];
+          let cm;
+          while ((cm = re.exec(raw)) !== null) codeMatches.push({ index: cm.index, end: cm.index + cm[0].length, code: cm[0] });
+
+          if (codeMatches.length > 0) {
+            let prevEnd = 0;
+            for (const { index, end, code } of codeMatches) {
+              // 当前改枪码之前的文本归给上一条记录
+              const before = raw.slice(prevEnd, index).trim();
+              if (before && current) current.values.push(before);
+              flush();
+              current = { index: codeCount++, code: code.trim(), values: [], price: '', ammo: '', note: '' };
+              prevEnd = end;
+            }
+            // 最后一个改枪码之后的文本（可能含价格/弹夹/备注）归给当前记录
+            const after = raw.slice(prevEnd).trim();
+            if (after && current) current.values.push(after);
             continue;
           }
           // 只有一个短文本、且明显像分组标题时，更新分类；不把定制备注当分类。
