@@ -1,0 +1,1056 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>v8.3.19 - 魔王S 改枪码查询</title>
+<style>
+:root {
+  --bg:#0d0f1a;--card:rgba(255,255,255,.05);--card2:rgba(255,255,255,.08);
+  --border:rgba(255,255,255,.1);--accent:#FF3366;--accent2:#00C2FF;
+  --purple:#8B5CFF;--green:#00D084;--yellow:#FFAA00;--text:#F0F0FF;--sub:#7777AA;--radius:12px;
+}
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Inter','Segoe UI',system-ui,sans-serif}
+body{background:var(--bg);color:var(--text);min-height:100vh}
+body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
+  background:radial-gradient(circle at 15% 25%,rgba(255,51,102,.15) 0%,transparent 45%),
+  radial-gradient(circle at 85% 75%,rgba(0,194,255,.12) 0%,transparent 45%);
+  pointer-events:none;z-index:0}
+
+/* 上传区 */
+#uploadSection{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:40px 20px;position:relative;z-index:1}
+.upload-title{font-size:2.2rem;font-weight:900;margin-bottom:8px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.upload-sub{color:var(--sub);margin-bottom:40px}
+.upload-zone{width:100%;max-width:520px;border:2px dashed rgba(255,51,102,.4);border-radius:20px;padding:52px 32px;text-align:center;cursor:pointer;background:rgba(255,51,102,.04);transition:all .3s;position:relative}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:rgba(255,51,102,.08)}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-hint{color:var(--text);font-size:1.05rem;font-weight:600;margin-bottom:8px}
+.upload-hint2{color:var(--sub);font-size:.875rem}
+#parseLoading{display:none;text-align:center;margin-top:24px}
+
+/* 主界面 */
+#mainSection{display:none;position:relative;z-index:1}
+.topbar{position:sticky;top:0;z-index:100;background:rgba(13,15,26,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.topbar-logo{font-size:1.2rem;font-weight:900;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent;white-space:nowrap}
+.device-status{display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);font-size:.85rem;cursor:pointer;transition:all .2s;white-space:nowrap}
+.device-status.connected{border-color:var(--green);color:var(--green)}
+.device-status.disconnected{border-color:var(--border);color:var(--sub)}
+.device-status.connecting{border-color:var(--yellow);color:var(--yellow)}
+.device-dot{width:8px;height:8px;border-radius:50%}
+.device-status.connected .device-dot{background:var(--green);animation:pulse 1.5s infinite}
+.device-status.disconnected .device-dot{background:var(--sub)}
+.device-status.connecting .device-dot{background:var(--yellow)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.topbar-file{font-size:.8rem;color:var(--sub);background:var(--card2);border:1px solid var(--border);padding:4px 10px;border-radius:6px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar-btn{padding:7px 14px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--sub);font-size:.82rem;cursor:pointer;transition:all .2s;white-space:nowrap}
+.topbar-btn:hover{border-color:var(--accent);color:var(--text)}
+.main-body{padding:20px;max-width:1300px;margin:0 auto}
+
+/* 当前枪 */
+#currentGunBox{display:none;align-items:center;gap:8px;padding:5px 12px;border-radius:10px;background:rgba(0,208,132,.08);border:1.5px solid rgba(0,208,132,.3)}
+#currentGunName{font-size:.88rem;font-weight:700;color:var(--green)}
+#currentGunId{font-size:.75rem;color:var(--sub);font-family:monospace}
+.copy-cur-btn{padding:3px 10px;border-radius:6px;border:1px solid rgba(0,208,132,.4);background:rgba(0,208,132,.12);color:var(--green);font-size:.75rem;font-weight:700;cursor:pointer;white-space:nowrap}
+
+/* 搜索 */
+.search-wrap{position:relative;margin-bottom:16px}
+.search-wrap input{width:100%;padding:14px 20px 14px 50px;background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);color:var(--text);font-size:1rem;outline:none;transition:border-color .2s}
+.search-wrap input:focus{border-color:var(--accent)}
+.search-wrap input::placeholder{color:var(--sub)}
+.search-icon{position:absolute;left:17px;top:50%;transform:translateY(-50%);font-size:1rem;color:var(--sub)}
+.suggestions{position:absolute;top:calc(100% + 6px);left:0;right:0;background:#15172a;border:1px solid var(--border);border-radius:var(--radius);z-index:200;max-height:280px;overflow-y:auto;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.suggestions.hidden{display:none}
+.sug-item{padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;transition:background .15s}
+.sug-item:last-child{border-bottom:none}
+.sug-item:hover{background:rgba(255,51,102,.12)}
+.sug-cnt{font-size:.78rem;color:var(--sub);background:var(--card2);padding:2px 8px;border-radius:10px}
+
+/* 筛选 */
+.filter-bar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:center}
+.filter-divider{width:1px;height:22px;background:var(--border)}
+.filter-label{font-size:.78rem;color:var(--sub)}
+.fbtn{padding:6px 14px;border-radius:20px;border:1.5px solid var(--border);background:transparent;color:var(--sub);font-size:.8rem;cursor:pointer;transition:all .2s;font-weight:600}
+.fbtn:hover{border-color:var(--accent);color:var(--text)}
+.fbtn.active-sort{background:linear-gradient(135deg,var(--purple),#C26CFF);border-color:transparent;color:#fff}
+.fbtn.active-filter{background:linear-gradient(135deg,var(--accent),#FF6B9D);border-color:transparent;color:#fff}
+
+/* 价格滑块 */
+.range-slider{-webkit-appearance:none;appearance:none;height:4px;border-radius:2px;outline:none;cursor:pointer;flex:1;min-width:120px}
+.range-slider::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:var(--accent);cursor:pointer}
+
+/* 结果 */
+.result-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px}
+.result-info{font-size:.875rem;color:var(--sub)}
+.result-info b{color:var(--accent)}
+.stats{display:flex;gap:10px;flex-wrap:wrap}
+.stat-chip{font-size:.76rem;padding:3px 9px;border-radius:8px;background:var(--card2);border:1px solid var(--border);color:var(--sub)}
+.results{display:grid;gap:10px}
+
+/* 卡片 */
+.gun-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:16px 18px;transition:border-color .2s,box-shadow .2s;animation:fadeIn .2s ease}
+.gun-card:hover{border-color:rgba(255,51,102,.35);box-shadow:0 4px 20px rgba(255,51,102,.1)}
+@keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+.card-header{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:8px;flex-wrap:wrap}
+.gun-badge{background:linear-gradient(135deg,rgba(255,51,102,.18),rgba(0,194,255,.18));border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:3px 10px;font-size:.82rem;font-weight:700;color:var(--accent2);white-space:nowrap}
+.card-metas{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.cmeta{font-size:.85rem}
+.cmeta-label{color:var(--sub);margin-right:3px}
+.price-c{color:#FFD700;font-weight:700}
+.ammo-c{color:var(--green);font-weight:700}
+.cdate{color:var(--sub);font-size:.78rem}
+.card-note{font-size:.85rem;color:#CCCCEE;margin-bottom:8px;line-height:1.6}
+.tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}
+.tag{padding:2px 8px;border-radius:10px;font-size:.72rem;font-weight:600}
+.t-jiao{background:rgba(0,208,132,.12);color:var(--green);border:1px solid rgba(0,208,132,.3)}
+.t-nojiao{background:rgba(255,71,87,.12);color:#FF4757;border:1px solid rgba(255,71,87,.3)}
+.t-px{background:rgba(139,92,255,.12);color:#B380FF;border:1px solid rgba(139,92,255,.3)}
+.t-xy{background:rgba(0,194,255,.12);color:var(--accent2);border:1px solid rgba(0,194,255,.3)}
+.t-yao{background:rgba(255,170,0,.12);color:var(--yellow);border:1px solid rgba(255,170,0,.3)}
+.code-block{margin-bottom:10px}
+.code-label{font-size:.76rem;color:var(--sub);margin-bottom:4px}
+.code-box{background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-family:monospace;font-size:.8rem;word-break:break-all;line-height:1.6;color:#D0D0FF}
+.card-actions{display:flex;gap:7px;flex-wrap:wrap}
+.cbtn{padding:7px 14px;border-radius:8px;border:none;cursor:pointer;font-size:.8rem;font-weight:700;transition:all .2s;display:flex;align-items:center;gap:5px;position:relative;overflow:hidden}
+.cbtn-code{background:linear-gradient(135deg,var(--accent),#FF6B9D);color:#fff}
+.cbtn-code:hover{transform:translateY(-2px)}
+.cbtn-id{background:linear-gradient(135deg,var(--purple),#C26CFF);color:#fff}
+.cbtn-id:hover{transform:translateY(-2px)}
+.cbtn-write{background:linear-gradient(135deg,var(--green),#00FFA3);color:#000;font-weight:800}
+.cbtn-write:hover{transform:translateY(-2px)}
+.cbtn-write.writing{background:#555;color:#aaa;cursor:not-allowed}
+.cbtn-write.write-done{background:linear-gradient(135deg,#00C2FF,#0090FF);color:#fff}
+.write-progress-inner{position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,.2);transition:width .3s;pointer-events:none;width:0}
+.cbtn-fav{background:var(--card2);color:#FFD700;border:1.5px solid rgba(255,215,0,.3)}
+.cbtn-fav:hover{background:rgba(255,215,0,.15)}
+.cbtn-fav.faved{background:rgba(255,215,0,.2);border-color:#FFD700}
+.cbtn-invalid{background:rgba(255,71,87,.1);color:#FF4757;border:1.5px solid rgba(255,71,87,.3)}
+.cbtn-invalid:hover{background:rgba(255,71,87,.2)}
+.cbtn-detail{background:var(--card2);color:var(--sub);border:1px solid var(--border)}
+.cbtn-detail:hover{color:var(--text);border-color:var(--accent2)}
+.detail-panel{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.detail-panel.open{display:block}
+.drow{display:flex;gap:10px;margin-bottom:6px;font-size:.82rem}
+.dkey{color:var(--sub);min-width:90px;flex-shrink:0}
+.dval{color:var(--text);word-break:break-all;font-family:monospace}
+.empty{text-align:center;padding:80px 20px;color:var(--sub)}
+
+/* 收藏/制式套 */
+.fav-group{margin-bottom:28px}
+.fav-group-title{font-size:1rem;font-weight:800;color:var(--accent2);padding:8px 0 12px;border-bottom:1px solid var(--border);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.fav-group-count{font-size:.78rem;color:var(--sub);background:var(--card2);padding:2px 8px;border-radius:10px;font-weight:400}
+.fav-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:14px 16px;margin-bottom:10px;transition:border-color .2s}
+.fav-card:hover{border-color:rgba(255,215,0,.35)}
+.fav-card-top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.fav-note{font-size:.82rem;color:#CCCCEE;margin-bottom:8px;line-height:1.5}
+.fav-code{background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:7px;padding:7px 12px;font-family:monospace;font-size:.78rem;word-break:break-all;color:#D0D0FF;margin-bottom:10px}
+.fav-actions{display:flex;gap:7px;flex-wrap:wrap}
+.cbtn-unfav{background:rgba(255,71,87,.12);color:#FF4757;border:1.5px solid rgba(255,71,87,.3)}
+.cbtn-unfav:hover{background:rgba(255,71,87,.2)}
+.fav-empty{text-align:center;padding:80px 20px;color:var(--sub)}
+
+/* 弹窗 */
+.modal{display:none;position:fixed;inset:0;z-index:9000;background:rgba(0,0,0,.7);align-items:center;justify-content:center}
+.modal.open{display:flex}
+.modal-box{background:#15172a;border:1.5px solid var(--border);border-radius:16px;padding:28px;width:480px;max-width:90%;max-height:85vh;overflow-y:auto}
+.modal-title{font-size:1.1rem;font-weight:800;margin-bottom:20px}
+.form-row{margin-bottom:14px}
+.form-label{font-size:.78rem;color:var(--sub);margin-bottom:6px;display:block}
+.form-input{width:100%;padding:10px 12px;border-radius:8px;border:1.5px solid var(--border);background:rgba(30,30,50,.8);color:var(--text);font-size:.85rem;outline:none}
+.form-input:focus{border-color:var(--accent)}
+.modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:20px}
+.btn-cancel{padding:9px 20px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--sub);cursor:pointer;font-size:.875rem}
+.btn-cancel:hover{border-color:var(--accent);color:var(--text)}
+
+/* toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(16px);background:#1a1c2e;border:1px solid var(--accent);color:var(--text);padding:10px 20px;border-radius:10px;font-size:.875rem;opacity:0;transition:all .25s;z-index:9999;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* AI推荐 */
+.rec-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
+.rec-header{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)}
+
+@media(max-width:600px){.topbar{padding:10px 14px}.main-body{padding:14px}.card-header{flex-direction:column}}
+</style>
+</head>
+<body>
+
+<!-- 启动提示 -->
+<div id="uploadSection" style="display:none"><div id="autoLoadTip" style="color:var(--accent2);font-size:.85rem;margin-top:16px;display:none">正在加载数据...</div></div>
+
+<!-- 主界面 -->
+<div id="mainSection">
+  <div class="topbar">
+    <div class="topbar-logo">🔫 魔王S</div>
+    <button class="device-status disconnected" id="deviceBtn" onclick="toggleDevice()">
+      <div class="device-dot"></div>
+      <span id="deviceText">连接压枪器</span>
+    </button>
+    <div id="currentGunBox">
+      <span style="font-size:.78rem;color:var(--sub)">当前枪</span>
+      <span id="currentGunName"></span>
+      <span id="currentGunId"></span>
+      <button class="copy-cur-btn" onclick="copyCurrentCode()">📋 复制改枪码</button>
+    </div>
+    <div class="topbar-file" id="topbarFile"></div>
+    <button class="topbar-btn" onclick="showFav()" id="favBtn" style="display:none">⭐ 收藏夹</button>
+    <button class="topbar-btn" onclick="showZhishi()" id="zhishiBtn" style="display:none;border-color:rgba(139,92,255,.4);color:#B380FF">🎖 制式套</button>
+    <button class="topbar-btn" onclick="showRecommend()" id="recommendBtn" style="display:none;border-color:rgba(255,170,0,.4);color:var(--yellow)">🔥 AI推荐</button>
+    <button class="topbar-btn" onclick="showAddForm()" id="addBtn" style="display:none;border-color:rgba(0,208,132,.4);color:var(--green)">➕ 添加</button>
+    <button class="topbar-btn" onclick="showInvalidMgr()" id="invalidBtn" style="display:none;border-color:rgba(255,71,87,.4);color:#FF4757">🚫 无效码</button>
+    <button class="topbar-btn" onclick="showTencentSync()" id="syncBtn" style="display:none;border-color:rgba(0,194,255,.4);color:var(--accent2)">🔄 腾讯同步</button>
+    <button class="topbar-btn" onclick="loadFromServer()" style="margin-left:auto">🔄 刷新数据</button>
+  </div>
+  <div class="main-body">
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="searchInput" placeholder="搜索枪名..." autocomplete="off">
+      <div class="suggestions hidden" id="suggestions"></div>
+    </div>
+    <div class="filter-bar">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="filter-label">排序</span>
+        <button class="fbtn active-sort" data-sort="date">🕐 最新</button>
+        <button class="fbtn" data-sort="price_asc">💰 低价</button>
+        <button class="fbtn" data-sort="price_desc">💎 高价</button>
+        <button class="fbtn" data-sort="ammo">📦 弹夹</button>
+      </div>
+      <div class="filter-divider"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="filter-label">筛选</span>
+        <button class="fbtn" data-filter="jiao">✅ 精校</button>
+        <button class="fbtn" data-filter="pingxi">🫁 屏息</button>
+        <button class="fbtn" data-filter="xiayin">🔇 消音</button>
+        <button class="fbtn" data-filter="yao">🦵 腰射</button>
+      </div>
+    </div>
+    <div style="margin-bottom:12px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="filter-label">💰 价格</span>
+      <input type="range" class="range-slider" id="priceMin" min="0" max="93" value="0">
+      <span id="priceRangeVal" style="font-size:.8rem;color:#FFD700;font-weight:700;min-width:80px">不限</span>
+      <input type="range" class="range-slider" id="priceMax" min="0" max="93" value="93">
+    </div>
+    <div class="result-bar">
+      <div class="result-info" id="resultInfo"></div>
+      <div class="stats" id="statsBar"></div>
+    </div>
+    <div class="results" id="results"></div>
+  </div>
+</div>
+
+<!-- 收藏页 -->
+<div id="favSection" style="display:none;position:relative;z-index:1">
+  <div class="topbar">
+    <div class="topbar-logo">⭐ 收藏夹</div>
+    <button class="topbar-btn" onclick="showMain2()">← 返回</button>
+  </div>
+  <div class="main-body">
+    <div style="margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span class="filter-label">按枪名</span>
+      <select id="favGunFilter" onchange="renderFav()" class="form-input" style="width:auto;min-width:160px">
+        <option value="">全部</option>
+      </select>
+      <span id="favCount" style="font-size:.82rem;color:var(--sub)"></span>
+      <button class="cbtn-unfav cbtn" style="margin-left:auto" onclick="clearAllFavs()">🗑 清空</button>
+    </div>
+    <div id="favContent"></div>
+  </div>
+</div>
+
+<!-- 制式套页 -->
+<div id="zhishiSection" style="display:none;position:relative;z-index:1">
+  <div class="topbar">
+    <div class="topbar-logo">🎖 制式套</div>
+    <button class="topbar-btn" onclick="showMain2()">← 返回</button>
+  </div>
+  <div class="main-body">
+    <div style="margin-bottom:12px">
+      <input type="text" id="zhishiSearch" placeholder="搜索枪名或备注..." oninput="renderZhishi()" class="form-input" style="width:100%;padding:12px 14px">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center">
+      <span class="filter-label">等级</span>
+      <button class="fbtn active-filter" data-zhishi="all" onclick="filterZhishi('all')">全部</button>
+      <button class="fbtn" data-zhishi="新兵" onclick="filterZhishi('新兵')">🟢 新兵</button>
+      <button class="fbtn" data-zhishi="标准" onclick="filterZhishi('标准')">🔵 标准</button>
+      <button class="fbtn" data-zhishi="精锐" onclick="filterZhishi('精锐')">🟣 精锐</button>
+      <button class="fbtn" data-zhishi="特种" onclick="filterZhishi('特种')">🟠 特种</button>
+      <button class="fbtn" data-zhishi="定制" onclick="filterZhishi('定制')">🔴 定制</button>
+      <span id="zhishiCount" style="font-size:.82rem;color:var(--sub)"></span>
+    </div>
+    <div id="zhishiContent"></div>
+  </div>
+</div>
+
+<!-- AI推荐页 -->
+<div id="recommendSection" style="display:none;position:relative;z-index:1">
+  <div class="topbar">
+    <div class="topbar-logo">🔥 AI推荐</div>
+    <button class="topbar-btn" onclick="showMain2()">← 返回</button>
+  </div>
+  <div class="main-body">
+    <div id="apiKeyBox" style="margin-bottom:20px;padding:16px;background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius)">
+      <div style="font-size:.85rem;color:var(--sub);margin-bottom:10px">🔑 智谱AI API Key（仅存本地）</div>
+      <div style="display:flex;gap:10px">
+        <input id="apiKeyInput" placeholder="填入API Key..." class="form-input" style="flex:1">
+        <button class="cbtn cbtn-write" onclick="saveApiKey()">保存</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
+      <button class="fbtn active-filter" onclick="getRecommend('综合最强')">🥇 综合最强</button>
+      <button class="fbtn" onclick="getRecommend('性价比首选')">💰 性价比</button>
+      <button class="fbtn" onclick="getRecommend('最新更新')">🕐 最新更新</button>
+      <button class="fbtn" onclick="getRecommend('制式套推荐')">🎖 制式套</button>
+      <button class="fbtn" onclick="getRecommend('压枪最稳')">🎯 压枪最稳</button>
+    </div>
+    <div id="recommendContent">
+      <div class="fav-empty"><div style="font-size:3rem">🤖</div><div style="margin-top:12px;color:var(--sub)">选择推荐类型，AI为你分析最佳改枪码</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 添加弹窗 -->
+<div class="modal" id="addModal">
+  <div class="modal-box">
+    <div class="modal-title">➕ 添加改枪码</div>
+    <div class="form-row"><label class="form-label">游戏模式 *</label><select id="add-mode" class="form-input"><option value="烽火地带">烽火地带</option><option value="全面战场">全面战场</option><option value="爆破">爆破</option></select></div>
+    <div class="form-row"><label class="form-label">改枪码 *</label><input id="add-code" class="form-input" placeholder="枪名-烽火地带-改枪码"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-row">
+        <label class="form-label">价格 / 制式等级</label>
+        <div style="display:flex;gap:8px">
+          <input id="add-price" class="form-input" placeholder="66w 或 制式-新兵" style="flex:1">
+          <select id="add-zhishi" onchange="applyZhishiLevel()" class="form-input" style="width:auto">
+            <option value="">普通</option>
+            <option value="制式-新兵">🟢 新兵</option>
+            <option value="制式-标准">🔵 标准</option>
+            <option value="制式-精锐">🟣 精锐</option>
+            <option value="制式-特种">🟠 特种</option>
+            <option value="制式-定制">🔴 定制</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row"><label class="form-label">弹夹</label><input id="add-ammo" class="form-input" placeholder="50发"></div>
+    </div>
+    <div class="form-row"><label class="form-label">备注</label><input id="add-note" class="form-input" placeholder="配件信息"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-row"><label class="form-label">日期</label><input id="add-date" class="form-input"></div>
+      <div class="form-row"><label class="form-label">控枪编号</label><input id="add-gunid" class="form-input" placeholder="6509"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeAddModal()">取消</button>
+      <button class="cbtn cbtn-write" onclick="submitAdd()">✅ 保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 腾讯文档同步弹窗 -->
+<div class="modal" id="tencentSyncModal">
+  <div class="modal-box" style="width:560px">
+    <div class="modal-title">🔄 腾讯文档一键同步</div>
+    <div style="font-size:.84rem;color:var(--sub);line-height:1.7;margin-bottom:16px">
+      以后不用再下载 50GB 文档，也不用一个个复制改枪码。只需要在腾讯文档页面点一次“同步助手”，选择需要的 Sheet 即可。
+    </div>
+    <div style="padding:14px;border:1px solid rgba(0,194,255,.25);background:rgba(0,194,255,.05);border-radius:10px;margin-bottom:14px">
+      <div style="font-weight:800;color:var(--accent2);margin-bottom:8px">第一次使用：安装同步助手</div>
+      <div style="font-size:.8rem;color:var(--sub);line-height:1.7;margin-bottom:10px">
+        1. 把下面的按钮拖到浏览器收藏夹；<br>
+        2. 打开你的腾讯文档；<br>
+        3. 在腾讯文档页面点击收藏夹里的“🔄 魔王S同步助手”。<br>
+        安装一次，以后重复使用即可。
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <a id="tencentBookmarklet" href="#" draggable="true" style="display:inline-block;padding:9px 13px;border-radius:8px;background:linear-gradient(135deg,#00c2ff,#0090ff);color:#fff;text-decoration:none;font-weight:800;cursor:grab">🔄 魔王S同步助手</a>
+        <button class="cbtn cbtn-detail" onclick="copyTencentBookmarklet()">📋 复制安装代码</button>
+      </div>
+    </div>
+    <div style="padding:12px 14px;border:1px dashed rgba(139,92,255,.35);background:rgba(139,92,255,.04);border-radius:10px;font-size:.8rem;color:var(--sub);line-height:1.7">
+      <b style="color:#B380FF">同步原理：</b>同步助手在腾讯文档页面内使用你当前的登录状态读取数据，然后只把解析后的改枪码发送到本地 8080 服务。不会把 Cookie 上传给本工具。
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
+      <button class="btn-cancel" onclick="closeTencentSync()">关闭</button>
+      <button class="cbtn cbtn-write" onclick="refreshAfterTencentSync()">🔄 同步后刷新本地数据</button>
+    </div>
+  </div>
+</div>
+
+<!-- 无效码弹窗 -->
+<div class="modal" id="invalidModal">
+  <div class="modal-box">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div class="modal-title" style="margin:0">🚫 无效码管理</div>
+      <button class="btn-cancel" onclick="closeInvalidMgr()">关闭</button>
+    </div>
+    <div style="font-size:.82rem;color:var(--sub);margin-bottom:16px">标记为无效的改枪码，点恢复重新显示</div>
+    <div id="invalidList"></div>
+    <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+      <button class="cbtn cbtn-invalid" onclick="clearAllInvalid()" style="width:100%;justify-content:center">🗑 清空所有无效记录</button>
+    </div>
+  </div>
+</div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// API 地址：页面由 8080 服务提供时使用同源；直接打开 HTML 时回退到 localhost:8080。
+const API_BASE = (location.protocol === 'http:' && location.port === '8080') ? '' : 'http://localhost:8080';
+function apiUrl(path){ return API_BASE + path; }
+function normalizeRecord(d){
+  d=d&&typeof d==='object'?d:{};
+  return {
+    ...d,
+    code:String(d.code??''), gunName:String(d.gunName??''), gunId:String(d.gunId??''), specialGunId:String(d.specialGunId??''),
+    price:String(d.price??''), ammo:String(d.ammo??''), note:String(d.note??''), date:String(d.date??''), sheet:String(d.sheet??''),
+    mode:String(d.mode??'烽火地带'), source:String(d.source??'tx'),
+    priceVal:Number.isFinite(Number(d.priceVal))?Number(d.priceVal):0, ammoVal:Number.isFinite(Number(d.ammoVal))?Number(d.ammoVal):0, dateVal:Number.isFinite(Number(d.dateVal))?Number(d.dateVal):0,
+    hasJiao:Boolean(d.hasJiao), hasPingxi:Boolean(d.hasPingxi), hasXiaoyin:Boolean(d.hasXiaoyin), hasYao:Boolean(d.hasYao)
+  };
+}
+
+
+// ========== 常量 ==========
+const VENDOR_ID = 0xF00A, PRODUCT_ID = 0x5F37, REPORT_ID = 0x20;
+const SLOT_MAP = {1:0x07,2:0x08,3:0x09,4:0x0A,5:0x0B,6:0x0C};
+const ZHISHI_LEVELS = ['新兵','标准','精锐','特种','定制'];
+const GLM_API = 'https://open.bigmodel.cn/api/paas/v4/chat/completions';
+const GUN_KEYWORDS = [
+  {name:'M14射手步枪',keys:['M14']},{name:'M7战斗步枪',keys:['M7']},
+  {name:'M4A1突击步枪',keys:['M4A1']},{name:'M249轻机枪',keys:['M249']},
+  {name:'M250通用机枪',keys:['M250']},{name:'AS Val突击步枪',keys:['AS Val','ASVAL','AS-VAL']},
+  {name:'ASh-12战斗步枪',keys:['ASh-12','ASH-12']},{name:'AK-12突击步枪',keys:['AK-12']},
+  {name:'AKM突击步枪',keys:['AKM']},{name:'AKS-74U突击步枪',keys:['AKS-74U']},
+  {name:'AR57突击步枪',keys:['AR57','AR-57']},{name:'AUG突击步枪',keys:['AUG']},
+  {name:'CAR-15突击步枪',keys:['CAR-15']},{name:'G18',keys:['G18']},
+  {name:'G3战斗步枪',keys:['G3']},{name:'K416突击步枪',keys:['K416']},
+  {name:'K437突击步枪',keys:['K437']},{name:'KC17突击步枪',keys:['KC17','kc17']},
+  {name:'MCX LT突击步枪',keys:['MCX LT','MCXLT','MCX']},{name:'MK47突击步枪',keys:['MK47']},
+  {name:'MK4冲锋枪',keys:['MK4']},{name:'MP5冲锋枪',keys:['MP5']},
+  {name:'MP7冲锋枪',keys:['MP7']},{name:'Mini-14射手步枪',keys:['Mini-14']},
+  {name:'P90冲锋枪',keys:['P90']},{name:'PKM通用机枪',keys:['PKM']},
+  {name:'PTR-32突击步枪',keys:['PTR-32','PTR']},{name:'QBZ95-1突击步枪',keys:['QBZ95-1','QBZ']},
+  {name:'QCQ171冲锋枪',keys:['QCQ171','QCQ']},{name:'QJB201轻机枪',keys:['QJB201','QJB']},
+  {name:'RM277突击步枪',keys:['RM277']},{name:'SCAR-H战斗步枪',keys:['SCAR-H','SCAR']},
+  {name:'SG552突击步枪',keys:['SG552']},{name:'SKS射手步枪',keys:['SKS']},
+  {name:'SMG-45冲锋枪',keys:['SMG-45','SMG']},{name:'SR-25射手步枪',keys:['SR-25']},
+  {name:'SR-3M紧凑突击步枪',keys:['SR-3M']},{name:'SVCH精确射手步枪',keys:['SVCH']},
+  {name:'SVD狙击步枪',keys:['SVD']},{name:'UZI冲锋枪',keys:['UZI']},
+  {name:'VSS射手步枪',keys:['VSS']},{name:'Vector冲锋枪',keys:['Vector']},
+  {name:'勇士冲锋枪',keys:['勇士']},{name:'腾龙突击步枪',keys:['腾龙']},
+  {name:'野牛冲锋枪',keys:['野牛']}
+];
+
+// ========== 状态 ==========
+let ALL_DATA = [], currentSearch = '', currentSort = 'date';
+let activeFilters = new Set(), priceMin = 0, priceMax = 93;
+let currentZhishiFilter = 'all', currentGunCode = '';
+let hidDevice = null;
+
+// ========== 工具函数 ==========
+function getGunName(code) {
+  const parts = code.split('-');
+  const nameParts = [];
+  const skip = ['烽火地带','烽火地 带','烽火地帶','烽 火地带'];
+  for (const p of parts) {
+    if (/^[A-Z0-9]{10,}$/.test(p.trim())) break;
+    const clean = p.trim().replace(/\u00a0/g,' ');
+    if (clean && !skip.includes(clean)) nameParts.push(clean);
+  }
+  const rawName = nameParts.join('-').replace(/^-+|-+$/g,'').trim();
+  if (!rawName) return '';
+  for (const gun of GUN_KEYWORDS) {
+    for (const key of gun.keys) {
+      if (rawName.includes(key)) return gun.name;
+    }
+  }
+  return rawName;
+}
+
+function parseCSVLine(line) {
+  const fields = [];
+  let inQuote = false, current = '';
+  for (const char of line) {
+    if (char === '"') inQuote = !inQuote;
+    else if (char === ',' && !inQuote) { fields.push(current); current = ''; }
+    else current += char;
+  }
+  fields.push(current);
+  return fields;
+}
+
+function parseRowData(rows, headerRow, colMap) {
+  const records = [];
+  const invalidCodes = getInvalidCodes();
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row.length) continue;
+    const get = (key, def='') => {
+      const idx = colMap[key];
+      if (idx === undefined || idx === null) return def;
+      return (Array.isArray(row) ? (row[idx]||'') : '').toString().trim().replace(/[\r\n]/g,' ');
+    };
+    const code = get('code');
+    if (!code || !/[A-Z0-9]{5,}/.test(code)) continue;
+    const col2 = get('col2');
+    if (ZHISHI_LEVELS.includes(col2)) continue; // 制式套行跳过，后面单独处理
+    const gunName = getGunName(code);
+    if (!gunName) continue;
+    const codeMatch = code.match(/[A-Z0-9]{10,}/);
+    const newCode = codeMatch ? gunName+'-烽火地带-'+codeMatch[0] : code;
+    if (invalidCodes.has(newCode)) continue;
+    const price = get('price'), ammo = get('ammo'), note = get('note');
+    const date = get('date'), gunId = get('gunId'), specialGunId = get('specialGunId');
+    const priceM = price.match(/(\d+)/), priceVal = priceM ? parseInt(priceM[1]) : 0;
+    const ammoNums = [...ammo.matchAll(/\d+/g)].map(m=>parseInt(m[0]));
+    const ammoVal = ammoNums.length ? Math.max(...ammoNums) : 0;
+    const dateM = date.match(/(\d+)[\/年](\d+)/);
+    const dateVal = dateM ? parseInt(dateM[1])*100+parseInt(dateM[2]) : 0;
+    records.push({
+      code:newCode, gunName, price, priceVal, ammo, ammoVal,
+      note, date, dateVal, gunId:(gunId&&gunId!=='nan')?gunId:'',
+      specialGunId:(specialGunId&&specialGunId!=='nan')?specialGunId:'',
+      sheet:'导入', hasJiao:!note.includes('无精校'),
+      hasPingxi:note.includes('屏息'), hasXiaoyin:note.includes('消音'), hasYao:note.includes('腰射')
+    });
+  }
+  // 制式套扫描
+  const existingCodes = new Set(records.map(r=>r.code));
+  for (const row of rows) {
+    if (!row || row.length < 3) continue;
+    const col0 = (row[0]||'').toString().trim();
+    const col2 = (row[2]||'').toString().trim();
+    const col7 = (row[7]||'').toString().trim();
+    if (/[A-Z0-9]{10,}/.test(col0) && ZHISHI_LEVELS.includes(col2)) {
+      const gunName = getGunName(col0);
+      if (!gunName) continue;
+      const codeMatch = col0.match(/[A-Z0-9]{10,}/);
+      const newCode = codeMatch ? gunName+'-烽火地带-'+codeMatch[0] : col0;
+      if (existingCodes.has(newCode)) continue;
+      existingCodes.add(newCode);
+      records.push({
+        code:newCode, gunName, price:col2, priceVal:0, ammo:'', ammoVal:0,
+        note:(row[3]||'').toString().trim(), date:'', dateVal:0,
+        gunId:(col7&&col7!=='nan')?col7:'', specialGunId:'', sheet:'制式套',
+        hasJiao:true, hasPingxi:false, hasXiaoyin:false, hasYao:false
+      });
+    }
+  }
+  return records;
+}
+
+function findHeaderAndColMap(rows) {
+  let headerRow = -1;
+  let colMap = {code:0,price:1,ammo:2,note:3,date:4,col2:2,gunId:-1,gunIdHeader:-1,specialGunId:-1,specialGunIdHeader:-1};
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const rowStr = row.join ? row.join(',') : '';
+    if (rowStr.includes('改枪码') && rowStr.includes('价格')) {
+      headerRow = i;
+      row.forEach((v, j) => {
+        v = v.toString().trim();
+        if (v.includes('改枪码') && v.includes('游戏')) colMap.code = j;
+        else if (v === '价格') colMap.price = j;
+        else if (v.includes('弹夹')) colMap.ammo = j;
+        else if (v.includes('备注')) colMap.note = j;
+        else if (v.includes('日期')) colMap.date = j;
+        else if (v.includes('特殊子弹ID')) { colMap.specialGunIdHeader=j; }
+        else if ((v.includes('控枪编号')||v.includes('ID'))&&!v.includes('特殊')&&!v.includes('数据')) {
+          colMap.gunIdHeader = j;
+        }
+      });
+      colMap.col2 = colMap.ammo; // 默认col2就是ammo列
+      break;
+    }
+  }
+  // 自动检测控枪编号实际列（处理合并单元格偏移）
+  if (colMap.gunIdHeader >= 0) {
+    colMap.gunId = colMap.gunIdHeader;
+    for (let i = headerRow+1; i < Math.min(rows.length, headerRow+10); i++) {
+      const row = rows[i];
+      if (!row) continue;
+      const vCur = (row[colMap.gunIdHeader]||'').toString().trim();
+      const vNext = (row[colMap.gunIdHeader+1]||'').toString().trim();
+      if (/^\d+$/.test(vNext) && !/^\d+$/.test(vCur)) { colMap.gunId = colMap.gunIdHeader+1; break; }
+      else if (/^\d+$/.test(vCur)) { colMap.gunId = colMap.gunIdHeader; break; }
+    }
+  }
+  if (colMap.specialGunIdHeader >= 0) {
+    colMap.specialGunId = colMap.specialGunIdHeader;
+  }
+  return { headerRow, colMap };
+}
+
+// ========== HID设备 ==========
+async function toggleDevice() {
+  if (hidDevice && hidDevice.opened) {
+    await hidDevice.close(); hidDevice = null; setDeviceStatus('disconnected'); return;
+  }
+  try {
+    setDeviceStatus('connecting');
+    const devices = await navigator.hid.requestDevice({filters:[{vendorId:VENDOR_ID,productId:PRODUCT_ID}]});
+    if (!devices.length) { setDeviceStatus('disconnected'); return; }
+    hidDevice = devices[0];
+    if (!hidDevice.opened) await hidDevice.open();
+    setDeviceStatus('connected');
+    showToast('✅ 压枪器已连接');
+  } catch(e) { setDeviceStatus('disconnected'); showToast('❌ 连接失败: '+e.message); }
+}
+
+function setDeviceStatus(status) {
+  const btn = document.getElementById('deviceBtn');
+  const text = document.getElementById('deviceText');
+  btn.className = 'device-status '+status;
+  text.textContent = status==='connected'?'已连接':status==='connecting'?'连接中...':'连接压枪器';
+  document.querySelectorAll('.cbtn-write').forEach(b => { b.disabled = status!=='connected'; });
+}
+
+function isConnected() { return hidDevice && hidDevice.opened; }
+
+function buildConfigPacket(slot, cfg) {
+  const buf = new Uint8Array(63).fill(0);
+  const view = new DataView(buf.buffer);
+  buf[0] = SLOT_MAP[slot]||0x07; buf[1] = 0x00; buf[2] = 0x22;
+  let offset = 3;
+  [1,2,3].forEach(ph => {
+    const p = cfg['phase'+ph];
+    view.setUint16(offset,p.time,true); offset+=2;
+    view.setUint16(offset,p.time_max,true); offset+=2;
+    buf[offset++]=p.delay_min; buf[offset++]=p.delay_max;
+    buf[offset++]=p.x_main&0xFF; buf[offset++]=p.y_main&0xFF;
+    buf[offset++]=p.x_alt&0xFF; buf[offset++]=p.y_alt&0xFF;
+    buf[offset++]=p.interval;
+  });
+  buf[offset++]=0x34; buf[offset++]=0x00;
+  return buf;
+}
+
+async function writeConfig(gunId, slot, btn) {
+  if (!hidDevice||!hidDevice.opened) { showToast('❌ 请先连接压枪器'); return; }
+  if (!btn||btn.classList.contains('writing')) return;
+  btn.innerHTML = '<span class="btn-label">写入中...</span><div class="write-progress-inner" style="width:0%"></div>';
+  btn.classList.add('writing'); btn.disabled = true;
+  const label = btn.querySelector('.btn-label');
+  const bar = btn.querySelector('.write-progress-inner');
+  const setP = (pct,txt) => { bar.style.width=pct+'%'; if(txt) label.textContent=txt; };
+  try {
+    setP(15,'获取配置...');
+    const resp = await fetch('https://hub.mowangs.com/client/sjzgetdata/?id='+gunId);
+    const json = await resp.json();
+    if (json.status!==200||!json.Data) throw new Error(json.msg||'服务器错误');
+    setP(55,'写入设备...');
+    const d = json.Data;
+    const cfg = {
+      phase1:{time:d.phase1_time,time_max:d.phase1_time_max,delay_min:d.phase1_delay_min,delay_max:d.phase1_delay_max,x_main:d.phase1_x_main,y_main:d.phase1_y_main,x_alt:d.phase1_x_alt,y_alt:d.phase1_y_alt,interval:d.phase1_interval},
+      phase2:{time:d.phase2_time,time_max:d.phase2_time_max,delay_min:d.phase2_delay_min,delay_max:d.phase2_delay_max,x_main:d.phase2_x_main,y_main:d.phase2_y_main,x_alt:d.phase2_x_alt,y_alt:d.phase2_y_alt,interval:d.phase2_interval},
+      phase3:{time:d.phase3_time,time_max:d.phase3_time_max,delay_min:d.phase3_delay_min,delay_max:d.phase3_delay_max,x_main:d.phase3_x_main,y_main:d.phase3_y_main,x_alt:d.phase3_x_alt,y_alt:d.phase3_y_alt,interval:d.phase3_interval}
+    };
+    await hidDevice.sendReport(REPORT_ID, buildConfigPacket(slot, cfg));
+    setP(100,'✅ 已写入'); btn.classList.remove('writing'); btn.classList.add('write-done'); btn.disabled=false;
+    updateCurrentGun(gunId); showToast('✅ 写入成功！');
+  } catch(e) {
+    setP(100,'❌ 写入失败'); bar.style.background='rgba(255,71,87,.5)';
+    btn.classList.remove('writing'); btn.disabled=false;
+    btn.style.background='linear-gradient(135deg,#FF4757,#FF6B82)';
+    showToast('❌ '+e.message);
+    setTimeout(()=>{ btn.innerHTML='<span class="btn-label">⚡ 写入压枪器</span><div class="write-progress-inner" style="width:0%"></div>'; btn.style.background=''; btn.classList.remove('write-done'); },3000);
+  }
+}
+
+// ========== 当前枪 ==========
+function updateCurrentGun(gunId) {
+  const gun = ALL_DATA.find(d=>d.gunId===gunId);
+  const name = gun?gun.gunName:'未知'; const code = gun?gun.code:'';
+  localStorage.setItem('current_gun', JSON.stringify({gunId,name,code}));
+  showCurrentGun(gunId,name,code);
+}
+function showCurrentGun(gunId,name,code) {
+  currentGunCode = code||'';
+  document.getElementById('currentGunName').textContent = name;
+  document.getElementById('currentGunId').textContent = 'ID:'+gunId;
+  document.getElementById('currentGunBox').style.display = 'flex';
+}
+function copyCurrentCode() {
+  if (!currentGunCode) { showToast('❌ 暂无改枪码'); return; }
+  copy(currentGunCode,'改枪码');
+}
+function loadCurrentGun() {
+  try {
+    const s = localStorage.getItem('current_gun');
+    if (s) { const {gunId,name,code}=JSON.parse(s); showCurrentGun(gunId,name,code||''); }
+  } catch(e) {}
+}
+
+// ========== 持久化数据：收藏 / 无效码 ==========
+let FAV_CACHE=[];
+let INVALID_CACHE=[];
+let PERSIST_READY=false;
+function recordKey(dOrCode,mode){return typeof dOrCode==='object'?String(dOrCode.mode||mode||'烽火地带')+'|'+String(dOrCode.code||''):String(mode||'烽火地带')+'|'+String(dOrCode||'');}
+async function loadPersistentData(){
+  try{
+    const [fr,ir]=await Promise.all([fetch(apiUrl('/api/favorites')),fetch(apiUrl('/api/invalid'))]);
+    FAV_CACHE=fr.ok?await fr.json():[]; INVALID_CACHE=ir.ok?await ir.json():[];
+    if(!FAV_CACHE.length){try{const old=JSON.parse(localStorage.getItem('gun_favs')||'[]');if(old.length){FAV_CACHE=old.map(x=>({...x,mode:x.mode||'烽火地带'}));await saveFavs(FAV_CACHE);}}catch{}}
+    if(!INVALID_CACHE.length){try{const old=JSON.parse(localStorage.getItem('invalid_codes')||'[]');if(old.length){INVALID_CACHE=old.map(x=>typeof x==='string'?{code:x,mode:'烽火地带'}:x);await saveInvalidCodes(INVALID_CACHE);}}catch{}}
+    PERSIST_READY=true;
+  }catch(e){PERSIST_READY=false;console.warn('持久化数据加载失败',e);}
+}
+function getInvalidCodes(){return new Set(INVALID_CACHE.map(x=>recordKey(x)));}
+async function saveInvalidCodes(items){
+  INVALID_CACHE=[...items].map(x=>typeof x==='string'?{code:x,mode:'烽火地带'}:x);
+  try{await fetch(apiUrl('/api/invalid'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:INVALID_CACHE})});}catch(e){showToast('⚠ 无效记录保存失败');}
+}
+function markInvalid(btn,code){
+  const gun=ALL_DATA.find(d=>d.code===code);const item={code,mode:gun?.mode||'烽火地带',gunName:gun?.gunName||''};
+  const inv=INVALID_CACHE.filter(x=>recordKey(x)!==recordKey(item));inv.push(item);saveInvalidCodes(inv);
+  const card=btn.closest('.gun-card');if(card){card.style.transition='opacity .3s,transform .3s';card.style.opacity='0';card.style.transform='translateX(20px)';setTimeout(()=>card.remove(),300);}showToast('🚫 已标记无效');
+}
+function showInvalidMgr(){document.getElementById('invalidModal').classList.add('open');renderInvalidList();}
+function closeInvalidMgr(){document.getElementById('invalidModal').classList.remove('open');}
+function renderInvalidList(){
+  const el=document.getElementById('invalidList');
+  if(!INVALID_CACHE.length){el.innerHTML='<div style="text-align:center;color:var(--sub);padding:24px">暂无记录</div>';return;}
+  el.innerHTML=INVALID_CACHE.map(item=>{
+    const gun=ALL_DATA.find(d=>recordKey(d)===recordKey(item));
+    const name=gun?.gunName||item.gunName||'未知';
+    const short=item.code.length>40?item.code.substring(0,40)+'...':item.code;
+    const key=recordKey(item).replace(/'/g,"\\'");
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border);gap:10px"><div><div style="font-size:.85rem;font-weight:700;color:var(--text);margin-bottom:3px">${name} · ${item.mode||'烽火地带'}</div><div style="font-size:.75rem;color:var(--sub);font-family:monospace">${short}</div></div><button class="cbtn cbtn-write" style="padding:5px 12px;font-size:.78rem" onclick="restoreInvalidByKey('${key}')">恢复</button></div>`;
+  }).join('');
+}
+async function restoreInvalidByKey(key){INVALID_CACHE=INVALID_CACHE.filter(x=>recordKey(x)!==key);await saveInvalidCodes(INVALID_CACHE);renderInvalidList();render();showToast('✅ 已恢复');}
+async function clearAllInvalid(){if(!confirm('确定清空所有无效记录？'))return;try{await fetch(apiUrl('/api/invalid/reset'),{method:'POST'});}catch{}INVALID_CACHE=[];closeInvalidMgr();render();showToast('✅ 已清空');}
+
+// ========== 收藏 ==========
+function getFavs(){return FAV_CACHE;}
+async function saveFavs(f){FAV_CACHE=[...f];try{await fetch(apiUrl('/api/favorites'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:FAV_CACHE})});}catch(e){showToast('⚠ 收藏保存失败');}}
+function isFaved(code,mode){return FAV_CACHE.some(f=>recordKey(f)===recordKey(code,mode));}
+async function toggleFav(d){let favs=getFavs();const key=recordKey(d);const idx=favs.findIndex(f=>recordKey(f)===key);if(idx>=0){favs.splice(idx,1);showToast('已取消收藏');}else{favs.unshift({...d,favedAt:Date.now(),mode:d.mode||'烽火地带'});showToast('⭐ 已收藏');}await saveFavs(favs);document.querySelectorAll('[data-fav-code]').forEach(btn=>{const faved=isFaved(btn.getAttribute('data-fav-code'),btn.getAttribute('data-fav-mode')||'烽火地带');btn.textContent=faved?'⭐ 已收藏':'☆ 收藏';btn.classList.toggle('faved',faved);});}
+function showFav(){hideAll();document.getElementById('favSection').style.display='block';renderFav();}
+function renderFav(){
+  const all=getFavs();
+  const filterEl=document.getElementById('favGunFilter');
+  const cur=filterEl?filterEl.value:'';
+  const names=[...new Set(all.map(d=>d.gunName))].sort();
+  if(filterEl)filterEl.innerHTML='<option value="">全部</option>'+names.map(n=>'<option value="'+n+'"'+(n===cur?' selected':'')+'>'+n+'</option>').join('');
+  const favs=cur?all.filter(d=>d.gunName===cur):all;
+  const countEl=document.getElementById('favCount');if(countEl)countEl.textContent='共'+favs.length+'条';
+  const container=document.getElementById('favContent');
+  if(!all.length){container.innerHTML='<div class="fav-empty"><div style="font-size:3rem">⭐</div><div style="margin-top:12px">暂无收藏</div></div>';return;}
+  if(!favs.length){container.innerHTML='<div class="fav-empty"><div style="font-size:2rem">🔍</div><div style="margin-top:12px">该枪暂无收藏</div></div>';return;}
+  const groups={};favs.forEach(d=>{if(!groups[d.gunName])groups[d.gunName]=[];groups[d.gunName].push(d);});
+  container.innerHTML=Object.entries(groups).map(([name,items])=>`<div class="fav-group"><div class="fav-group-title">🔫 ${name}<span class="fav-group-count">${items.length}条</span></div>${items.map(d=>{const code=d.code.replace(/'/g,"\\'");const key=recordKey(d).replace(/'/g,"\\'");return `<div class="fav-card"><div class="fav-card-top"><div style="display:flex;align-items:center;gap:8px"><span class="cmeta"><span class="cmeta-label">模式</span><span class="price-c">${d.mode||'烽火地带'}</span></span><span class="cmeta"><span class="cmeta-label">价格</span><span class="price-c">${d.price}</span></span><span class="cmeta"><span class="cmeta-label">弹夹</span><span class="ammo-c">${d.ammo}</span></span></div><span class="cdate">${d.date}</span></div><div class="fav-note">📝 ${d.note}</div><div class="fav-code">${d.code}</div><div class="fav-actions"><button class="cbtn cbtn-code" onclick="copy('${code}','改枪码')">📋 复制改枪码</button><button class="cbtn cbtn-unfav" onclick="removeFavByKey('${key}')">🗑 取消</button></div></div>`;}).join('')}</div>`).join('');
+}
+async function removeFavByKey(key){await saveFavs(getFavs().filter(f=>recordKey(f)!==key));renderFav();render();showToast('已取消收藏');}
+async function clearAllFavs(){if(!confirm('确定清空所有收藏？'))return;try{await fetch(apiUrl('/api/favorites/reset'),{method:'POST'});}catch{}FAV_CACHE=[];renderFav();render();showToast('✅ 已清空');}
+
+// ========== AI推荐 ==========
+function showRecommend() { hideAll(); document.getElementById('recommendSection').style.display='block'; const k=localStorage.getItem('zhipu_api_key'); if(k){document.getElementById('apiKeyInput').value=k; document.getElementById('apiKeyBox').style.display='none';} }
+function saveApiKey() { const k=document.getElementById('apiKeyInput').value.trim(); if(!k){showToast('❌ 请输入API Key');return;} localStorage.setItem('zhipu_api_key',k); document.getElementById('apiKeyBox').style.display='none'; showToast('✅ API Key已保存'); }
+async function getRecommend(type) {
+  const apiKey=localStorage.getItem('zhipu_api_key');
+  if(!apiKey){document.getElementById('apiKeyBox').style.display='block'; showToast('❌ 请先填入API Key'); return;}
+  const container=document.getElementById('recommendContent');
+  container.innerHTML='<div style="text-align:center;padding:60px;color:var(--sub)"><div style="font-size:2rem;margin-bottom:16px">🤖</div><div>AI正在分析'+ALL_DATA.length+'条数据...</div></div>';
+  const summary=ALL_DATA.slice(0,200).map(function(d){return{枪名:d.gunName,改枪码:d.code,价格:d.price,弹夹:d.ammo,控枪编号:d.gunId||'',备注:d.note,有精校:d.hasJiao,制式套:ZHISHI_LEVELS.includes(d.price)?d.price:''};});
+  const prompt='你是游戏"烽火地带"的改枪码专家。以下是改枪码数据（JSON）：\n\n'+JSON.stringify(summary,null,0)+'\n\n请给出"'+type+'"类别的推荐，要求：\n1.推荐3-5把枪，每把说明理由\n2.格式用###枪名开头\n3.必须包含改枪码（完整字符串）、价格、弹夹、精校情况、控枪编号\n4.中文简洁\n5.制式套推荐按等级各一把';
+  try {
+    const resp=await fetch(GLM_API,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey},body:JSON.stringify({model:'glm-4-flash',messages:[{role:'user',content:prompt}],max_tokens:1500,temperature:0.7})});
+    const data=await resp.json();
+    if(data.error) throw new Error(data.error.message);
+    renderRecommend(data.choices[0].message.content,type);
+  } catch(e) {
+    container.innerHTML='<div class="fav-empty"><div style="font-size:2rem">❌</div><div style="margin-top:12px;color:#FF4757">AI请求失败: '+e.message+'</div></div>';
+  }
+}
+function renderRecommend(text,type) {
+  const container=document.getElementById('recommendContent');
+  // 把AI文本里出现的改枪码替换成带复制按钮的块
+  let htmlContent=text
+    .replace(/### (.+)/g,'<div class="fav-group-title" style="margin-top:20px">🔫 $1</div>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong style="color:var(--accent2)">$1</strong>')
+    .replace(/^- (.+)/gm,'<div style="padding:4px 0;color:var(--sub);font-size:.875rem">• $1</div>')
+    .replace(/\n\n/g,'<br>').replace(/\n/g,'<br>');
+  // 查找文本中出现的改枪码（匹配枪名-烽火地带-大写字母数字串格式）
+  const codePattern = /([\u4e00-\u9fa5A-Za-z0-9_\-]+-烽火地带-[A-Z0-9]{10,})/g;
+  htmlContent = htmlContent.replace(codePattern, function(match) {
+    const safe = match.replace(/&/g,"&amp;");
+    return '<div style="margin:6px 0;background:rgba(0,0,0,.35);border:1px solid var(--border);border-radius:8px;padding:7px 12px;font-family:monospace;font-size:.78rem;word-break:break-all;color:#D0D0FF;display:flex;align-items:center;justify-content:space-between;gap:8px"><span>' + safe + '</span><button class="cbtn cbtn-code" style="padding:4px 10px;font-size:.75rem;flex-shrink:0" data-c="' + safe + '" onclick="copy(this.dataset.c,&quot;改枪码&quot;)">📋 复制</button></div>';
+  });
+  const wrapper=document.createElement('div'); wrapper.className='rec-card';
+  const header=document.createElement('div'); header.className='rec-header';
+  header.innerHTML='<span style="font-size:1.1rem;font-weight:800;color:var(--yellow)">🔥 '+type+'</span><span style="font-size:.78rem;color:var(--sub)">基于'+ALL_DATA.length+'条数据</span>';
+  const rb=document.createElement('button'); rb.className='cbtn cbtn-detail'; rb.style.cssText='margin-left:auto;padding:5px 12px;font-size:.78rem'; rb.textContent='🔄 重新生成'; rb.onclick=()=>getRecommend(type); header.appendChild(rb);
+  const body=document.createElement('div'); body.style.cssText='line-height:1.8;font-size:.9rem;color:var(--text)'; body.innerHTML=htmlContent;
+  wrapper.appendChild(header); wrapper.appendChild(body);
+  container.innerHTML=''; container.appendChild(wrapper);
+}
+
+// ========== 数据加载 ==========
+async function loadFromServer(){
+  const tip=document.getElementById('autoLoadTip');
+  try{
+    if(tip) tip.style.display='block';
+    const resp=await fetch(apiUrl('/api/data'),{cache:'no-store'});
+    if(!resp.ok) throw new Error('HTTP '+resp.status);
+    const raw=await resp.json();
+    if(!Array.isArray(raw)) throw new Error('API返回格式错误：不是数组');
+    ALL_DATA=raw.map(normalizeRecord).filter(d=>d.code && d.gunName);
+    setText('topbarFile','📄 data目录('+ALL_DATA.length+'条)');
+    try{ showMain(); }
+    catch(err){ console.error('[gun_search] render error:',err); throw new Error('数据读取成功，但页面渲染失败：'+(err.message||err)); }
+    showToast(ALL_DATA.length?'✅ 已加载'+ALL_DATA.length+'条':'ℹ 暂无数据，请先同步或手动新增');
+  }catch(e){
+    console.error('[gun_search] loadFromServer error:',e);
+    showToast('❌ '+(e?.message||'加载失败，请确认服务器运行中'));
+  }finally{ if(tip) tip.style.display='none'; }
+}
+
+
+(async function autoLoad(){try{await loadPersistentData();await loadFromServer();}catch(e){console.error(e);}})();
+
+// ========== 搜索 ==========
+const searchInput=document.getElementById('searchInput');
+const suggestionsEl=document.getElementById('suggestions');
+searchInput.addEventListener('input',()=>{currentSearch=searchInput.value.trim();updateSuggestions();render();});
+searchInput.addEventListener('focus',updateSuggestions);
+document.addEventListener('click',e=>{if(!e.target.closest('.search-wrap'))suggestionsEl.classList.add('hidden');});
+
+function updateSuggestions(){
+  const q=searchInput.value.trim().toLowerCase();
+  if(!q){suggestionsEl.classList.add('hidden');return;}
+  const map={};
+  ALL_DATA.forEach(d=>{if(d.gunName.toLowerCase().includes(q)||d.note.toLowerCase().includes(q))map[d.gunName]=(map[d.gunName]||0)+1;});
+  const guns=Object.entries(map).sort((a,b)=>b[1]-a[1]).slice(0,12);
+  if(!guns.length){suggestionsEl.classList.add('hidden');return;}
+  suggestionsEl.innerHTML=guns.map(([name,cnt])=>'<div class="sug-item" data-name="'+name.replace(/"/g,'&quot;')+'"><span>'+name+'</span><span class="sug-cnt">'+cnt+'条</span></div>').join('');
+  suggestionsEl.querySelectorAll('.sug-item').forEach(el=>{el.addEventListener('mousedown',()=>selectGun(el.getAttribute('data-name')));});
+  suggestionsEl.classList.remove('hidden');
+}
+function selectGun(name){searchInput.value=name;currentSearch=name;suggestionsEl.classList.add('hidden');render();}
+
+// ========== 排序筛选 ==========
+document.querySelectorAll('[data-sort]').forEach(btn=>{btn.addEventListener('click',()=>{document.querySelectorAll('[data-sort]').forEach(b=>b.classList.remove('active-sort'));btn.classList.add('active-sort');currentSort=btn.dataset.sort;render();});});
+document.querySelectorAll('[data-filter]').forEach(btn=>{btn.addEventListener('click',()=>{const f=btn.dataset.filter;if(activeFilters.has(f)){activeFilters.delete(f);btn.classList.remove('active-filter');}else{activeFilters.add(f);btn.classList.add('active-filter');}render();});});
+
+// 价格滑块
+function updateSlider(){
+  let mn=parseInt(document.getElementById('priceMin').value);
+  let mx=parseInt(document.getElementById('priceMax').value);
+  if(mn>mx)mn=mx;
+  priceMin=mn;priceMax=mx;
+  document.getElementById('priceRangeVal').textContent=(mn===0&&mx===93)?'不限':mn+'w-'+mx+'w';
+  const mnPct=mn/93*100,mxPct=mx/93*100;
+  document.getElementById('priceMin').style.background='linear-gradient(to right,var(--accent) 0%,var(--accent) '+mnPct+'%,var(--border) '+mnPct+'%,var(--border) 100%)';
+  document.getElementById('priceMax').style.background='linear-gradient(to right,var(--border) 0%,var(--border) '+mxPct+'%,var(--accent) '+mxPct+'%,var(--accent) 100%)';
+  render();
+}
+
+// ========== 制式套判断与页面 ==========
+function isZhishi(d){
+  if(!d || typeof d!=='object') return false;
+  const price=String(d.price||'').trim();
+  const sheet=String(d.sheet||'').trim();
+  return ZHISHI_LEVELS.includes(price) || sheet==='制式套';
+}
+function showZhishi(){
+  hideAll();
+  setDisplay('zhishiSection','block');
+  renderZhishi();
+}
+function filterZhishi(level){
+  currentZhishiFilter=level||'all';
+  document.querySelectorAll('[data-zhishi]').forEach(btn=>{
+    btn.classList.toggle('active-filter',btn.getAttribute('data-zhishi')===currentZhishiFilter);
+  });
+  renderZhishi();
+}
+function renderZhishi(){
+  const content=document.getElementById('zhishiContent');
+  const count=document.getElementById('zhishiCount');
+  if(!content) return;
+  let data=ALL_DATA.filter(d=>isZhishi(d));
+  const q=(document.getElementById('zhishiSearch')?.value||'').trim().toLowerCase();
+  if(q) data=data.filter(d=>String(d.gunName||'').toLowerCase().includes(q)||String(d.note||'').toLowerCase().includes(q)||String(d.code||'').toLowerCase().includes(q));
+  if(currentZhishiFilter!=='all') data=data.filter(d=>String(d.price||'').trim()===currentZhishiFilter);
+  if(count) count.textContent='共'+data.length+'条';
+  if(!data.length){content.innerHTML='<div class="empty"><div style="font-size:3rem">🎖</div><div>暂无制式套数据</div></div>';return;}
+  content.innerHTML=data.map(d=>{
+    const level=String(d.price||'').trim();
+    const shortCode=String(d.code||'');
+    return `<div class="gun-card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><div style="font-weight:800;font-size:1rem">${d.gunName||'未知枪械'}</div><div style="margin-top:5px;color:var(--sub);font-size:.82rem">${level||'制式套'}${d.note?' · '+d.note:''}</div></div><button class="cbtn" onclick="copy('${shortCode.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','改枪码')">复制</button></div><div style="margin-top:9px;font-family:monospace;font-size:.76rem;color:var(--sub);word-break:break-all">${shortCode}</div></div>`;
+  }).join('');
+}
+
+function getFiltered(){
+  const invalidCodes=getInvalidCodes();
+  let data=ALL_DATA.filter(d=>!invalidCodes.has(recordKey(d))&&!isZhishi(d));
+  if(currentSearch){const q=currentSearch.toLowerCase();data=data.filter(d=>d.gunName.toLowerCase().includes(q)||d.note.toLowerCase().includes(q)||d.code.toLowerCase().includes(q));}
+  if(priceMin>0||priceMax<93)data=data.filter(d=>d.priceVal===0||(d.priceVal>=priceMin&&d.priceVal<=priceMax));
+  if(activeFilters.has('jiao'))data=data.filter(d=>d.hasJiao);
+  if(activeFilters.has('pingxi'))data=data.filter(d=>d.hasPingxi);
+  if(activeFilters.has('xiayin'))data=data.filter(d=>d.hasXiaoyin);
+  if(activeFilters.has('yao'))data=data.filter(d=>d.hasYao);
+  if(currentSort==='date')data.sort((a,b)=>b.dateVal-a.dateVal);
+  else if(currentSort==='price_asc')data.sort((a,b)=>a.priceVal-b.priceVal);
+  else if(currentSort==='price_desc')data.sort((a,b)=>b.priceVal-a.priceVal);
+  else if(currentSort==='ammo')data.sort((a,b)=>b.ammoVal-a.ammoVal);
+  return data;
+}
+
+function render(){
+  const data=getFiltered();
+  document.getElementById('resultInfo').innerHTML='共<b>'+data.length+'</b>条';
+  document.getElementById('statsBar').innerHTML='<span class="stat-chip">✅ 精校 '+data.filter(d=>d.hasJiao).length+'</span><span class="stat-chip">🫁 屏息 '+data.filter(d=>d.hasPingxi).length+'</span><span class="stat-chip">🔇 消音 '+data.filter(d=>d.hasXiaoyin).length+'</span><span class="stat-chip">🦵 腰射 '+data.filter(d=>d.hasYao).length+'</span>';
+  const resultsEl=document.getElementById('results');
+  if(!data.length){resultsEl.innerHTML='<div class="empty"><div style="font-size:3rem">🔍</div><div>没有找到匹配数据</div></div>';return;}
+  resultsEl.innerHTML=data.map((d,i)=>{
+    const tags=[
+      d.hasJiao?'<span class="tag t-jiao">✅ 精校</span>':'<span class="tag t-nojiao">❌ 无精校</span>',
+      d.hasPingxi?'<span class="tag t-px">🫁 屏息</span>':'',
+      d.hasXiaoyin?'<span class="tag t-xy">🔇 消音</span>':'',
+      d.hasYao?'<span class="tag t-yao">🦵 腰射</span>':''
+    ].join('');
+    const hasId=d.gunId&&d.gunId!=='nan'&&d.gunId!=='';
+    const hasSpecialId=d.specialGunId&&d.specialGunId!=='nan'&&d.specialGunId!=='';
+    const slotId='slot-'+i;
+    const faved=isFaved(d.code,d.mode);
+    return '<div class="gun-card">'+
+      '<div class="card-header"><span class="gun-badge">'+d.gunName+'</span>'+
+      '<div class="card-metas"><span class="cmeta"><span class="cmeta-label">价格</span><span class="price-c">'+d.price+'</span></span><span class="cmeta"><span class="cmeta-label">弹夹</span><span class="ammo-c">'+d.ammo+'</span></span><span class="cdate">'+d.date+'</span></div></div>'+
+      '<div class="card-note">📝 '+d.note+'</div>'+
+      '<div class="tags">'+tags+'</div>'+
+      '<div class="code-block"><div class="code-label">🎮 改枪码</div><div class="code-box">'+d.code+'</div></div>'+
+      (hasId?'<div class="code-block"><div class="code-label">🖥 压枪编码（ID）</div><div class="code-box">'+d.gunId+'</div></div>':'')+
+      (hasSpecialId?'<div class="code-block"><div class="code-label">🎯 特殊子弹压枪编码</div><div class="code-box">'+d.specialGunId+'</div></div>':'')+
+      '<div class="card-actions">'+
+      '<button class="cbtn cbtn-code" onclick="copy(\''+d.code.replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\',\'改枪码\')">📋 复制改枪码</button>'+
+      (hasId?'<button class="cbtn cbtn-id" onclick="copy(\''+d.gunId+'\',\'压枪编码（ID）\')">📋 复制压枪编码</button>':'')+
+      (hasSpecialId?'<button class="cbtn cbtn-id" onclick="copy(\''+d.specialGunId+'\',\'特殊子弹ID\')">📋 复制特殊子弹ID</button>':'')+
+      (hasId||hasSpecialId?'<select id="'+slotId+'" class="form-input" style="width:auto;padding:5px 8px"><option value="1">第1把</option><option value="2">第2把</option><option value="3">第3把</option><option value="4">第4把</option><option value="5">第5把</option><option value="6">第6把</option></select>':'')+
+      (hasId?'<button class="cbtn cbtn-write" '+(isConnected()?'':'disabled')+' onclick="writeConfig(\''+d.gunId+'\',parseInt(document.getElementById(\''+slotId+'\').value),this)">⚡ 写入压枪器</button>':'')+
+      (hasSpecialId?'<button class="cbtn cbtn-write" '+(isConnected()?'':'disabled')+' onclick="writeConfig(\''+d.specialGunId+'\',parseInt(document.getElementById(\''+slotId+'\').value),this)">🎯 写入特殊子弹</button>':'')+
+      '<button class="cbtn cbtn-fav '+(faved?'faved':'')+'" data-fav-code="'+d.code+'" onclick="handleFavClick(this, \''+d.code.replace(/'/g,"\\'")+'\')">'+(faved?'⭐ 已收藏':'☆ 收藏')+'</button>'+
+      '<button class="cbtn cbtn-invalid" onclick="markInvalid(this,\''+d.code.replace(/'/g,"\\'")+'\')">🚫 无效</button>'+
+      '<button class="cbtn cbtn-detail" onclick="toggleDetail(this)">📖 详情</button>'+
+      '</div>'+
+      '<div class="detail-panel">'+
+      '<div class="drow"><span class="dkey">枪名</span><span class="dval">'+d.gunName+'</span></div>'+
+      '<div class="drow"><span class="dkey">完整改枪码</span><span class="dval">'+d.code+'</span></div>'+
+      '<div class="drow"><span class="dkey">价格</span><span class="dval">'+d.price+'</span></div>'+
+      '<div class="drow"><span class="dkey">弹夹</span><span class="dval">'+d.ammo+'</span></div>'+
+      '<div class="drow"><span class="dkey">日期</span><span class="dval">'+d.date+'</span></div>'+
+      '<div class="drow"><span class="dkey">压枪编码（ID）</span><span class="dval">'+(d.gunId||'—')+'</span></div>'+
+      '<div class="drow"><span class="dkey">特殊子弹ID</span><span class="dval">'+(d.specialGunId||'—')+'</span></div>'+
+      '<div class="drow"><span class="dkey">备注</span><span class="dval">'+d.note+'</span></div>'+
+      '</div></div>';
+  }).join('');
+}
+
+function toggleDetail(btn){const p=btn.closest('.gun-card').querySelector('.detail-panel');p.classList.toggle('open');btn.textContent=p.classList.contains('open')?'📖 收起':'📖 详情';}
+
+// ========== 页面切换 ==========
+function setText(id, text){
+  const el=document.getElementById(id);
+  if(el) el.textContent=text;
+}
+function setDisplay(id, display){
+  const el=document.getElementById(id);
+  if(el) el.style.display=display;
+}
+function hideAll(){
+  ['mainSection','favSection','zhishiSection','recommendSection'].forEach(id=>setDisplay(id,'none'));
+}
+function showMain(){
+  hideAll();
+  setDisplay('uploadSection','none');
+  setDisplay('parseLoading','none');
+  setDisplay('mainSection','block');
+  ['favBtn','zhishiBtn','recommendBtn','addBtn','invalidBtn','syncBtn'].forEach(id=>setDisplay(id,'inline-flex'));
+
+  if(!window.__priceListenersBound){
+    const priceMin=document.getElementById('priceMin');
+    const priceMax=document.getElementById('priceMax');
+    if(priceMin) priceMin.addEventListener('input',updateSlider);
+    if(priceMax) priceMax.addEventListener('input',updateSlider);
+    window.__priceListenersBound=true;
+  }
+  loadCurrentGun();
+  render();
+}
+function showMain2(){
+  hideAll();
+  setDisplay('mainSection','block');
+}
+function resetToUpload(){loadFromServer();}
+
+// ========== 腾讯文档同步 ==========
+function getTencentBookmarklet(){
+  const code="javascript:(()=>{const s=document.createElement('script');s.src='http://localhost:8080/tencent_sync.js?t='+Date.now();document.documentElement.appendChild(s)})()";
+  return code;
+}
+function prepareTencentBookmarklet(){
+  const a=document.getElementById('tencentBookmarklet');
+  if(a) a.href=getTencentBookmarklet();
+}
+function showTencentSync(){
+  prepareTencentBookmarklet();
+  document.getElementById('tencentSyncModal').classList.add('open');
+}
+function closeTencentSync(){document.getElementById('tencentSyncModal').classList.remove('open');}
+function copyTencentBookmarklet(){
+  const code=getTencentBookmarklet();
+  copy(code,'同步助手安装代码');
+}
+async function refreshAfterTencentSync(){
+  try{
+    const resp=await fetch(API_BASE+'/api/data');
+    const records=await resp.json();
+    if(!records||!records.length){showToast('❌ 暂时没有读取到本地数据');return;}
+    ALL_DATA=records;
+    document.getElementById('topbarFile').textContent='📄 data目录('+records.length+'条)';
+    closeTencentSync();
+    showMain();
+    showToast('✅ 已刷新，共'+records.length+'条');
+  }catch(e){showToast('❌ 刷新失败：'+e.message);}
+}
+
+// ========== 添加改枪码 ==========
+function showAddForm(){
+  document.getElementById('addModal').classList.add('open');
+  const now=new Date(); document.getElementById('add-date').value=(now.getMonth()+1)+'月'+now.getDate()+'日';
+  document.getElementById('add-zhishi').value='';
+}
+function closeAddModal(){document.getElementById('addModal').classList.remove('open');}
+function applyZhishiLevel(){const v=document.getElementById('add-zhishi').value;if(v)document.getElementById('add-price').value=v;}
+async function submitAdd(){
+  const mode=document.getElementById('add-mode').value;
+  const code=document.getElementById('add-code').value.trim();
+  if(!code){showToast('❌ 改枪码不能为空');return;}
+  const price=document.getElementById('add-price').value.trim();
+  const ammo=document.getElementById('add-ammo').value.trim();
+  const note=document.getElementById('add-note').value.trim();
+  const date=document.getElementById('add-date').value.trim();
+  const gunId=document.getElementById('add-gunid').value.trim();
+  try{
+    const resp=await fetch(API_BASE+'/api/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code,price,ammo,note,date,gunId,mode,specialGunId:''})});
+    const json=await resp.json();
+    if(json.ok){closeAddModal();showToast('✅ 已保存');await loadFromServer();}
+    else showToast('❌ 保存失败');
+  }catch(e){showToast('❌ 请求失败:'+e.message);}
+}
+
+// ========== 工具 ==========
+function copy(text,label){
+  navigator.clipboard.writeText(text).then(()=>showToast('✅ '+label+'已复制！')).catch(()=>{const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);showToast('✅ '+label+'已复制！');});
+}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
+function handleFavClick(btn, code) {
+  const mode=btn.getAttribute('data-fav-mode')||'烽火地带';
+  let item=ALL_DATA.find(d=>d.code===code&&(d.mode||'烽火地带')===mode);
+  if(!item)item=getFavs().find(f=>f.code===code&&(f.mode||'烽火地带')===mode);
+  if(item)toggleFav(item);
+}
+</script>
+</body>
+</html>
