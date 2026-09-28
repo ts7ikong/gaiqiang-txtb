@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.0
+ * 魔王S 腾讯文档同步助手 v9.0.3
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -182,9 +182,14 @@
           else if (t.includes('特殊子弹')) map.special ??= c;
           else if (t.includes('网址使用') || t.includes('控枪编号') || /^(ID|编号)$/i.test(t)) map.gunId ??= c;
           else if (t.includes('价格')) map.price ??= c;
-          else if (t.includes('弹夹')) map.ammo ??= c;
+          else if (t.includes('镜子') || t.includes('瞄准镜')) map.scope ??= c;
+          else if (t.includes('弹夹') || t.includes('弹匣')) map.ammo ??= c;
+          else if (t.includes('属性图') || t.includes('属性')) map.attributeImage ??= c;
+          else if (t.includes('改装展示') || t.includes('改装图')) map.modShow ??= c;
           else if (t.includes('备注')) map.note ??= c;
-          else if (t.includes('日期')) map.date ??= c;
+          else if (t.includes('日期') || t.includes('时间')) map.date ??= c;
+          else if (/^FOV$/i.test(t) || t.includes('FOV')) map.fov ??= c;
+          else if (t.includes('精校')) map.precision ??= c;
         }
         return { headerRow: r, map };
       }
@@ -208,12 +213,19 @@
         .sort((a, b) => a[0] - b[0])
         .map(([r, cols]) => [r, new Map([...cols].sort((a, b) => a[0] - b[0]))]);
       const { headerRow, map } = detectHeader(rows);
-      map.gunId = fixIdColumn(rows, headerRow, map.gunId);
-      map.special = fixIdColumn(rows, headerRow, map.special);
+      // S11 烽火地带的已知业务列顺序：
+      // 改枪码、价格、镜子、弹夹、属性图、改装展示、备注、ID、特殊ID、FOV、精校……
+      // 仅在当前响应没有读到表头时使用；一旦有真实表头，始终以表头为准。
+      if (headerRow < 0 && /S11\s*烽火地带|S11烽火地带/.test(sheetName || '')) {
+        Object.assign(map, { code: 0, price: 1, scope: 2, ammo: 3, attributeImage: 4, modShow: 5, note: 6, gunId: 7, special: 8, fov: 9, precision: 10 });
+      }
+      if (headerRow >= 0) {
+        map.gunId = fixIdColumn(rows, headerRow, map.gunId);
+        map.special = fixIdColumn(rows, headerRow, map.special);
+      }
 
-      // 表格顶部的“改枪码更新时间”作为没有日期列时的默认日期
       let defaultDate = '';
-      for (const [, cols] of rows.slice(0, 15)) {
+      for (const [, cols] of rows.slice(0, 30)) {
         for (const v of cols.values()) {
           const m = cellText(v).match(/改枪码更新时间\s*[:：]?\s*(\d{1,2})[./月](\d{1,2})/);
           if (m) { defaultDate = `${new Date().getFullYear()}/${+m[1]}/${+m[2]}`; break; }
@@ -224,32 +236,68 @@
       const out = [];
       const seen = new Set();
       let category = '';
+
       for (const [r, cols] of rows) {
-        if (r <= headerRow) continue;
+        if (headerRow >= 0 && r <= headerRow) continue;
+
+        const values = [...cols.entries()].sort((a, b) => a[0] - b[0]);
         const get = k => (map[k] == null ? undefined : cols.get(map[k]));
 
-        // 优先读改枪码列，读不到再扫描整行（防止列错位）
-        let m = CODE_RE.exec(cellText(get('code')));
-        if (!m) {
-          for (const v of cols.values()) {
-            if (typeof v === 'string' && (m = CODE_RE.exec(norm(v)))) break;
-          }
+        // 先找真正的改枪码；不要依赖固定第 0/3 列。
+        let code = '';
+        let codeCol = -1;
+        for (const [c, v] of values) {
+          const m = typeof v === 'string' ? CODE_RE.exec(norm(v)) : null;
+          CODE_RE.lastIndex = 0;
+          if (m) { code = m[0].trim(); codeCol = c; break; }
         }
 
-        if (!m) {
-          // 分组标题行：整行只有一个文本值（如“M700全自动”“MP5”），后续记录继承该分组
-          const vals = [...cols.values()].filter(v => cellText(v));
-          if (vals.length === 1 && typeof vals[0] === 'string' && cellText(vals[0]).length <= 40) {
-            category = cellText(vals[0]);
+        if (!code) {
+          // 分组标题行，例如“M700全自动”“射手步枪合集”。
+          const vals = values.map(([, v]) => cellText(v)).filter(Boolean);
+          if (vals.length === 1 && typeof vals[0] === 'string' && vals[0].length <= 60 && !CODE_RE.test(vals[0])) {
+            category = vals[0];
           }
+          CODE_RE.lastIndex = 0;
           continue;
         }
 
-        const code = m[0].trim();
         if (seen.has(code)) continue;
         seen.add(code);
+        const m = CODE_RE.exec(code); CODE_RE.lastIndex = 0;
 
-        const dateRaw = get('date');
+        // 有表头时严格按列读取；没有表头时，只按“同一行的值形态”推断，
+        // 绝不再把下一行/下一列的数据硬拼进当前记录。
+        let price = cellText(get('price'));
+        let ammo = cellText(get('ammo'));
+        let note = cellText(get('note'));
+        let dateRaw = get('date');
+        let gunId = toId(get('gunId'));
+        let specialGunId = toId(get('special'));
+        let scope = map.scope == null ? '' : cellText(cols.get(map.scope));
+        let attributeImage = map.attributeImage == null ? '' : cellText(cols.get(map.attributeImage));
+        let modShow = map.modShow == null ? '' : cellText(cols.get(map.modShow));
+        let fov = map.fov == null ? '' : cellText(cols.get(map.fov));
+        let precision = map.precision == null ? '' : cellText(cols.get(map.precision));
+
+        if (headerRow < 0 && map.code == null) {
+          const after = values.filter(([c]) => c > codeCol).map(([, v]) => v);
+          if (!price) price = after.find(v => /^\d+(?:\.\d+)?w$/i.test(cellText(v))) ? cellText(after.find(v => /^\d+(?:\.\d+)?w$/i.test(cellText(v)))) : '';
+          if (!ammo) ammo = after.find(v => /^\d+(?:\+\d+)?发$/.test(cellText(v))) ? cellText(after.find(v => /^\d+(?:\+\d+)?发$/.test(cellText(v)))) : '';
+          if (!note) {
+            const candidate = after.find(v => {
+              const t = cellText(v);
+              return t && !/^\d+(?:\.\d+)?w$/i.test(t) && !/^\d+(?:\+\d+)?发$/.test(t) && t.length <= 300 && !/^\d+$/.test(t);
+            });
+            note = cellText(candidate);
+          }
+          if (!gunId) {
+            const nums = after.filter(v => /^\d{4,6}$/.test(cellText(v))).map(v => cellText(v));
+            gunId = nums.find(x => x.length === 4) || '';
+            specialGunId = nums.find(x => x !== gunId && x.length === 4) || '';
+          }
+        }
+
         const date = typeof dateRaw === 'number' && dateRaw > 30000 && dateRaw < 80000
           ? serialToDate(dateRaw)
           : (cellText(dateRaw) || defaultDate);
@@ -257,15 +305,11 @@
         out.push({
           row: r,
           code,
-          gunNameRaw: m[1].replace(/^\d+/, '').trim(),
-          mode: m[2],
+          gunNameRaw: m ? m[1].replace(/^\d+/, '').trim() : '',
+          mode: m ? m[2] : inferMode(sheetName),
           category,
-          price: cellText(get('price')),     // 制式套这里就是等级名，保持原样，查询页 isZhishi 能识别
-          ammo: cellText(get('ammo')),
-          note: cellText(get('note')),
-          date,
-          gunId: toId(get('gunId')),
-          specialGunId: toId(get('special')),
+          price, scope, ammo, attributeImage, modShow, note,
+          date, gunId, specialGunId, fov, precision,
           sheet: sheetName
         });
       }
@@ -326,102 +370,239 @@
       return norm(String(s ?? '').replace(/^[\r\n\t ]+/, ''));
     }
 
+    // 新版序列业务解析：当前 S11 的 protobuf 叶子并不是“每 13 个值一行”。
+    // 空单元格/图片对象可能没有可读文本，因此不能按固定下标取列。
+    // 这里以“改枪码”为行锚点，在下一个改枪码前按值类型/语义识别业务字段。
     function sequenceFallback(rawBlocks, sheetName) {
       const seq = [];
       for (const raw of rawBlocks) seq.push(...readLeafSequence(raw));
 
-      const out = [];
-      const seen = new Set();
+      const out = [], seen = new Set();
       let category = '';
       let current = null;
+
+      const isPrice = v => typeof v === 'string' && /^\d+(?:\.\d+)?w$/i.test(v);
+      const isAmmo = v => typeof v === 'string' && /^\d+(?:\+\d+)?发$/.test(v);
+      const isIdNum = v => typeof v === 'number' && Number.isInteger(v) && v >= 1000 && v <= 999999;
+      const isFov = v => typeof v === 'string' && /^(通用|固定FOV|任意FOV|FOV任意|默认)$/.test(v);
+      const isNoise = v => {
+        if (typeof v === 'number') return false;
+        const s = String(v || '');
+        return !s || /^\d+(?:\.\d+)?$/.test(s) || /^\d{4}[\/-]\d{1,2}[\/-]\d{1,2}/.test(s);
+      };
+      const clean = v => typeof v === 'string' ? cleanSequenceText(v) : v;
+
+      function buildRecord(c) {
+        if (!c || !c.code) return null;
+        const vals = c.values.map(clean).filter(v => !isNoise(v));
+        const strings = vals.filter(v => typeof v === 'string' && v.length > 0);
+
+        let price = vals.find(isPrice) || '';
+        let ammo = vals.find(isAmmo) || '';
+        let fov = strings.find(isFov) || '';
+
+        // ID 通常出现在备注/图片相关字段之后、FOV 附近。
+        // 优先选择位于 FOV 前面的 4~6 位整数；没有 FOV 时取最后一个合理整数。
+        const fovIndex = fov ? vals.lastIndexOf(fov) : vals.length;
+        const beforeFovNums = vals
+          .slice(0, fovIndex)
+          .map((v, i) => ({ v, i }))
+          .filter(x => isIdNum(x.v));
+        const gunIdObj = beforeFovNums.length ? beforeFovNums[beforeFovNums.length - 1] : null;
+        const gunId = gunIdObj ? String(gunIdObj.v) : '';
+
+        // 业务顺序：价格 -> 镜子 -> 弹夹 -> 图片/对象 -> 备注 -> ID -> FOV。
+        // 图片没有可读叶子，因此剩下的短文本按顺序恢复镜子/备注。
+        const afterPrice = [];
+        let started = false;
+        for (const v of vals) {
+          if (!started) {
+            if (v === price) started = true;
+            continue;
+          }
+          if (v === ammo || v === gunIdObj?.v || v === fov) continue;
+          if (typeof v === 'string' && !isPrice(v) && !isAmmo(v) && !isFov(v)) afterPrice.push(v);
+        }
+
+        // 第一段短文本通常是镜子，第二段通常是备注；如果只有一段，结合
+        // 常见镜子名称判断，否则按“备注”处理，避免把备注误当镜子。
+        const scopeRe = /^(红点|反射5000|全息|三倍|四倍|五倍|六倍|二倍|1倍|2倍|3倍|4倍|5倍|6倍|微型红点|俄式2倍|俄式三倍|轻语|堡垒|斜角|双流|共振|瞄准镜|无镜)$/i;
+        let scope = '';
+        let note = '';
+        for (const v of afterPrice) {
+          if (!scope && scopeRe.test(v)) scope = v;
+          else if (!note) note = v;
+        }
+        if (!scope && afterPrice.length >= 2) scope = afterPrice[0];
+        if (!note && afterPrice.length >= 2) note = afterPrice[afterPrice.length - 1];
+        if (!note && afterPrice.length === 1 && !scope) note = afterPrice[0];
+
+        const m = CODE_RE.exec(c.code);
+        CODE_RE.lastIndex = 0;
+        return {
+          row: c.index,
+          code: c.code,
+          gunNameRaw: m ? m[1].replace(/^\d+/, '').trim() : '',
+          mode: m ? m[2] : inferMode(sheetName),
+          category: c.category || category,
+          price,
+          scope,
+          ammo,
+          attributeImage: '',
+          modShow: '',
+          note,
+          date: '',
+          gunId,
+          specialGunId: '',
+          fov,
+          precision: '',
+          sheet: sheetName
+        };
+      }
+
       const flush = () => {
         if (!current) return;
-        if (!current.price && current.values.length) {
-          // 先严格匹配纯价格字符串，再宽松提取（价格与备注混在同一字符串时）
-          let price = current.values.find(v => typeof v === 'string' && /^\d+(?:\.\d+)?w$/i.test(v));
-          if (!price) {
-            for (const v of current.values) {
-              if (typeof v !== 'string') continue;
-              const pm = v.match(/(\d+(?:\.\d+)?w)\b/i);
-              if (pm) { price = pm[1]; break; }
-            }
-          }
-          if (price) current.price = price;
-        }
-        if (!current.ammo && current.values.length) {
-          let ammo = current.values.find(v => typeof v === 'string' && /^\d+(?:\+\d+)?发$/.test(v));
-          if (!ammo) {
-            for (const v of current.values) {
-              if (typeof v !== 'string') continue;
-              const am = v.match(/(\d+(?:\+\d+)?发)/);
-              if (am) { ammo = am[1]; break; }
-            }
-          }
-          if (ammo) current.ammo = ammo;
-        }
-        if (!current.note && current.values.length) {
-          // 收集所有非价格/弹夹的文本（可能有多列：如"镜子"+"备注"），合并后不丢字段
-          const parts = current.values.filter(v => typeof v === 'string' && v !== current.price && v !== current.ammo && v.length <= 300);
-          if (parts.length) current.note = parts.join(' ').slice(0, 300);
-        }
-        const code = current.code;
-        if (code && !seen.has(code)) {
-          seen.add(code);
-          const m = CODE_RE.exec(code);
-          out.push({
-            row: current.index,
-            code,
-            gunNameRaw: m ? m[1].replace(/^\d+/, '').trim() : '',
-            mode: m ? m[2] : inferMode(sheetName),
-            category,
-            price: current.price || '',
-            ammo: current.ammo || '',
-            note: current.note || '',
-            date: '', gunId: '', specialGunId: '', sheet: sheetName
-          });
+        const rec = buildRecord(current);
+        if (rec && rec.code && !seen.has(rec.code)) {
+          seen.add(rec.code);
+          out.push(rec);
         }
         current = null;
       };
 
       let codeCount = 0;
-      for (let i = 0; i < seq.length; i++) {
-        const item = seq[i];
+      for (const item of seq) {
         const raw = item.type === 'text' ? cleanSequenceText(item.value) : item.value;
         if (item.type === 'text') {
-          // 用全局正则扫出同一节点里所有改枪码（一个叶子可能含多条记录或代码+价格+备注）
-          const re = new RegExp(CODE_RE.source, 'g');
-          const codeMatches = [];
-          let cm;
-          while ((cm = re.exec(raw)) !== null) codeMatches.push({ index: cm.index, end: cm.index + cm[0].length, code: cm[0] });
-
-          if (codeMatches.length > 0) {
-            let prevEnd = 0;
-            for (const { index, end, code } of codeMatches) {
-              // 当前改枪码之前的文本归给上一条记录
-              const before = raw.slice(prevEnd, index).trim();
-              if (before && current) current.values.push(before);
-              flush();
-              current = { index: codeCount++, code: code.trim(), values: [], price: '', ammo: '', note: '' };
-              prevEnd = end;
-            }
-            // 最后一个改枪码之后的文本（可能含价格/弹夹/备注）归给当前记录
-            const after = raw.slice(prevEnd).trim();
-            if (after && current) current.values.push(after);
+          const m = CODE_RE.exec(raw);
+          CODE_RE.lastIndex = 0;
+          if (m) {
+            flush();
+            current = { index: codeCount++, code: m[0].trim(), values: [], category };
             continue;
           }
-          // 只有一个短文本、且明显像分组标题时，更新分类；不把定制备注当分类。
-          if (!current && raw && raw.length <= 40 && !/[\-]{2,}/.test(raw) && !/^\d/.test(raw)) {
+          if (!current && raw && raw.length <= 60 && !/[-]{2,}/.test(raw) && !/^\d/.test(raw)) {
             category = raw;
             continue;
           }
           if (current && raw) current.values.push(raw);
-        } else if (current && typeof raw === 'number') {
-          // 数字叶子多为日期/ID/图片尺寸等元数据，先不强行映射到 ID，避免污染。
+        } else if (current && typeof raw === 'number' && Number.isFinite(raw)) {
           current.values.push(raw);
         }
       }
       flush();
       return { records: out, sequence: seq.length };
+    }
+
+
+
+    // 针对当前 S11 烽火地带：新版 related_sheet 的业务表会被编码成
+    // “同一消息里 field=1 的重复子消息列表”。每个重复项就是一个单元格，
+    // occurrence index 就是该单元格在扁平表格中的真实位置。
+    function firstLeafValue(buf, depth = 0) {
+      if (!buf || !buf.length || depth > 12) return '';
+      let fs;
+      try { fs = readFields(buf); } catch { return ''; }
+      for (const f of fs) {
+        if (f.wire === 2 && f.bytes) {
+          let s = '';
+          try { s = td.decode(f.bytes); } catch {}
+          if (s && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(s)) return s;
+          const nested = firstLeafValue(f.bytes, depth + 1);
+          if (nested !== '') return nested;
+        } else if (f.wire === 1 && f.bytes?.length === 8) {
+          try {
+            const n = new DataView(f.bytes.buffer, f.bytes.byteOffset, 8).getFloat64(0, true);
+            if (Number.isFinite(n) && Math.abs(n) < 1e12) return n;
+          } catch {}
+        }
+      }
+      return '';
+    }
+
+    function findFlatCellLists(raw) {
+      const candidates = [];
+      function walk(buf, path, depth) {
+        if (!buf || !buf.length || depth > 30) return;
+        let fs;
+        try { fs = readFields(buf); } catch { return; }
+        const byField = new Map();
+        for (const f of fs) {
+          if (f.wire === 2 && f.bytes) {
+            if (!byField.has(f.no)) byField.set(f.no, []);
+            byField.get(f.no).push(f.bytes);
+          }
+        }
+        for (const [field, children] of byField) {
+          if (children.length < 20) continue;
+          const cells = children.map((b, i) => ({ index: i, value: firstLeafValue(b), raw: b }));
+          const codeCount = cells.filter(c => typeof c.value === 'string' && CODE_RE.test(c.value)).length;
+          CODE_RE.lastIndex = 0;
+          if (codeCount >= 2) {
+            candidates.push({ path, field, cells, score: codeCount * 100000 + children.length });
+          }
+        }
+        for (const f of fs) {
+          if (f.wire === 2 && f.bytes) walk(f.bytes, path.concat(f.no), depth + 1);
+        }
+      }
+      walk(raw, [], 0);
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates;
+    }
+
+    function columnRecordFallback(rawBlocks, sheetName) {
+      if (!/S11\s*烽火地带|S11烽火地带/.test(sheetName || '')) return { records: [], cells: 0 };
+      const all = [];
+      for (const raw of rawBlocks) {
+        for (const c of findFlatCellLists(raw)) {
+          all.push(c);
+        }
+      }
+      if (!all.length) return { records: [], cells: 0 };
+      all.sort((a, b) => b.score - a.score);
+      const chosen = all[0];
+      const cells = chosen.cells;
+      const valueAt = i => {
+        if (i < 0 || i >= cells.length) return '';
+        const v = cells[i].value;
+        return typeof v === 'number' ? String(v) : norm(String(v ?? ''));
+      };
+      const out = [];
+      const seen = new Set();
+      for (let i = 0; i < cells.length; i++) {
+        const code = valueAt(i);
+        if (!code || !CODE_RE.test(code)) { CODE_RE.lastIndex = 0; continue; }
+        CODE_RE.lastIndex = 0;
+        const m = CODE_RE.exec(code);
+        if (!m || seen.has(code)) continue;
+        // 表头/说明文字不符合完整改枪码结构的，CODE_RE 本身就会过滤掉。
+        const row = {
+          row: out.length,
+          code,
+          gunNameRaw: m[1].replace(/^\\d+/, '').trim(),
+          mode: m[2] || inferMode(sheetName),
+          category: '',
+          price: valueAt(i + 1),
+          scope: valueAt(i + 2),
+          ammo: valueAt(i + 3),
+          attributeImage: valueAt(i + 4),
+          modShow: valueAt(i + 5),
+          note: valueAt(i + 6),
+          date: '',
+          gunId: valueAt(i + 7),
+          specialGunId: valueAt(i + 8),
+          fov: valueAt(i + 9),
+          precision: valueAt(i + 10),
+          sheet: sheetName
+        };
+        // 只有明确的 ID 数字才写入，避免把普通文本污染到 ID 字段。
+        row.gunId = /^\d+$/.test(row.gunId) ? row.gunId : '';
+        row.specialGunId = /^\d+$/.test(row.specialGunId) ? row.specialGunId : '';
+        seen.add(code);
+        out.push(row);
+      }
+      return { records: out, cells: cells.length, candidatePath: chosen.path, candidateField: chosen.field };
     }
 
     /** 兜底：protobuf 结构变了时，至少从解压文本里把改枪码捞出来，不丢码 */
@@ -443,7 +624,7 @@
       return out;
     }
 
-    return { readFields, parseBlock, gridToRecords, sequenceFallback, readLeafSequence, textFallback, serialToDate, inferMode, cellText };
+    return { readFields, parseBlock, gridToRecords, sequenceFallback, readLeafSequence, columnRecordFallback, findFlatCellLists, textFallback, serialToDate, inferMode, cellText };
   })();
 
   // Node 单测入口：没有 window 时只导出解析器
@@ -460,7 +641,7 @@
     return;
   }
 
-  const VERSION = '9.0.2';
+  const VERSION = '9.0.5';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
@@ -633,28 +814,21 @@
 
     const grid = new Map();
     const texts = [];
+    const raws = [];
     const td = new TextDecoder('utf-8');
     let cells = 0, errors = 0;
     for (const b64 of blobs) {
       const raw = await inflate(b64);
+      raws.push(raw);
       try { cells += Parser.parseBlock(raw, grid); }
       catch (e) { errors++; console.warn('[魔王S] 数据块解析失败', e); }
       texts.push(td.decode(raw));
     }
 
     let records = Parser.gridToRecords(grid, sheet.name);
-    let strategy = 'protobuf-grid';
+    let strategy = records.length ? 'protobuf-grid' : 'protobuf-grid-empty';
     let sequenceValues = 0;
     if (!records.length) {
-      // 新版 related_sheet：先用递归 Protobuf 叶子序列恢复“改枪码→价格→弹夹→备注”。
-      const seq = Parser.sequenceFallback([...blobs].map(b64 => null), sheet.name);
-      // 上面不能直接把 Base64 当 raw，因此实际序列恢复在下方重新读取 raw。
-      records = [];
-    }
-    if (!records.length) {
-      // 重新解压，走结构自适应序列解析；不依赖固定 field 号。
-      const raws = [];
-      for (const b64 of blobs) raws.push(await inflate(b64));
       const seq = Parser.sequenceFallback(raws, sheet.name);
       records = seq.records;
       sequenceValues = seq.sequence;
@@ -704,7 +878,7 @@
       for (const sheet of selected) {
         log(`▶ ${sheet.name}：读取中…`);
         const d = await loadSheet(sheet);
-        log(`  数据块 ${d.blocks}，单元格 ${d.cells}，改枪码 ${d.records.length} 条；压枪ID ${d.records.filter(x => x.gunId).length}，特殊子弹ID ${d.records.filter(x => x.specialGunId).length}`);
+        log(`  数据块 ${d.blocks}，单元格 ${d.cells}，序列值 ${d.sequenceValues || 0}，改枪码 ${d.records.length} 条；ID ${d.records.filter(x => x.gunId).length}，特殊子弹ID ${d.records.filter(x => x.specialGunId).length}`);
         if (d.errors) log(`  ⚠ ${d.errors} 个数据块解析失败，详见控制台`);
         if (d.strategy === 'text') log('  ⚠ protobuf 未解析出记录，已退回文本扫描（只有改枪码，无价格/ID）');
         if (!d.records.length) { log('  跳过：没有改枪码'); continue; }
@@ -741,7 +915,10 @@
         `=== 解析出的记录（${d.records.length} 条） ===`,
         ...d.records.map(r => [
           `R${r.row ?? '-'}`, r.category && `[${r.category}]`, r.code,
-          `价格=${r.price}`, `弹夹=${r.ammo}`, `日期=${r.date}`, `ID=${r.gunId}`, `特殊ID=${r.specialGunId}`, `备注=${r.note}`
+          `价格=${r.price}`, `镜子=${r.scope || ''}`, `弹夹=${r.ammo}`,
+          `属性图=${r.attributeImage || ''}`, `改装展示=${r.modShow || ''}`,
+          `备注=${r.note}`, `ID=${r.gunId}`, `特殊ID=${r.specialGunId}`,
+          `FOV=${r.fov || ''}`, `精校=${r.precision || ''}`
         ].filter(Boolean).join(' | ')),
         '',
         '=== 原始网格（前 300 行） ==='
