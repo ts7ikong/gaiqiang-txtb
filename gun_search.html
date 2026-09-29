@@ -311,7 +311,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
     <button class="topbar-btn" onclick="showMain2()">← 返回</button>
   </div>
   <div class="main-body">
-    <div style="font-size:.8rem;color:var(--sub);margin-bottom:14px">在首页、收藏夹、制式套的枪械卡片上点「💣 加入爆破」，选一列加入；这里每把枪选好槽位后可直接写入压枪器。</div>
+    <div style="font-size:.8rem;color:var(--sub);margin-bottom:14px">在首页、收藏夹、制式套的枪械卡片上点「💣 加入爆破」，选一列加入；这里每把枪点一下即写入压枪器的第 1 个槽位。</div>
     <div id="blastContent" class="blast-grid"></div>
   </div>
 </div>
@@ -1010,6 +1010,7 @@ function toggleDetail(btn){const p=btn.closest('.gun-card').querySelector('.deta
 
 // ========== 爆破模式 ==========
 const BLAST_COLS=['手枪','标准','精锐','特种'];
+const BLAST_SLOT=1; // 爆破模式固定写入第 1 个槽位
 let BLAST_CACHE=[], PENDING_BLAST=null;
 function jsq(v){return String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
 async function saveBlast(){
@@ -1034,7 +1035,7 @@ function closeBlastPick(){document.getElementById('blastPickModal').classList.re
 async function addToBlast(col){
   const d=PENDING_BLAST; if(!d) return;
   if(BLAST_CACHE.some(x=>x.col===col&&recordKey(x)===recordKey(d))){showToast('该枪已在「'+col+'」列');return;}
-  BLAST_CACHE.push({col,code:d.code,gunName:d.gunName,gunId:d.gunId||'',specialGunId:d.specialGunId||'',mode:d.mode||'烽火地带',price:d.price||'',note:d.note||'',slot:1,addedAt:Date.now()});
+  BLAST_CACHE.push({col,code:d.code,gunName:d.gunName,gunId:d.gunId||'',specialGunId:d.specialGunId||'',mode:d.mode||'烽火地带',price:d.price||'',note:d.note||'',addedAt:Date.now()});
   closeBlastPick();
   await saveBlast();
   showToast('💣 已加入爆破「'+col+'」');
@@ -1048,16 +1049,13 @@ function renderBlast(){
     const items=BLAST_CACHE.map((x,idx)=>({x,idx})).filter(o=>o.x.col===col);
     const body=items.length?items.map(({x,idx})=>{
       const hasId=x.gunId&&x.gunId!=='nan', hasSp=x.specialGunId&&x.specialGunId!=='nan';
-      const sid='bl-slot-'+idx, slot=x.slot||1;
-      const opts=[1,2,3,4,5,6].map(n=>'<option value="'+n+'"'+(n===slot?' selected':'')+'>第'+n+'把</option>').join('');
       const dis=isConnected()?'':' disabled';
       return '<div class="blast-item"><div class="blast-item-name">'+x.gunName+'</div>'+
         '<div class="blast-item-meta">'+[x.price,x.note].filter(Boolean).join(' · ')+'</div>'+
         (hasId?'<div class="blast-item-id">ID '+x.gunId+'</div>':'')+
         '<div class="blast-item-actions">'+
-        ((hasId||hasSp)?'<select id="'+sid+'" class="form-input" style="width:auto;padding:4px 6px;font-size:.74rem" onchange="setBlastSlot('+idx+',this.value)">'+opts+'</select>':'')+
-        (hasId?'<button class="cbtn cbtn-write"'+dis+' onclick="writeConfig(\''+jsq(x.gunId)+'\',parseInt(document.getElementById(\''+sid+'\').value),this)">⚡ 写入压枪器</button>':'')+
-        (hasSp?'<button class="cbtn cbtn-write"'+dis+' onclick="writeConfig(\''+jsq(x.specialGunId)+'\',parseInt(document.getElementById(\''+sid+'\').value),this)">🎯 特殊子弹</button>':'')+
+        (hasId?'<button class="cbtn cbtn-write"'+dis+' onclick="writeConfig(\''+jsq(x.gunId)+'\',BLAST_SLOT,this)">⚡ 写入压枪器</button>':'')+
+        (hasSp?'<button class="cbtn cbtn-write"'+dis+' onclick="writeConfig(\''+jsq(x.specialGunId)+'\',BLAST_SLOT,this)">🎯 特殊子弹</button>':'')+
         '<button class="cbtn cbtn-code" onclick="copy(\''+jsq(x.code)+'\',\'改枪码\')">📋 改枪码</button>'+
         '<button class="cbtn cbtn-unfav" onclick="removeBlast('+idx+')">✕</button>'+
         '</div></div>';
@@ -1065,7 +1063,6 @@ function renderBlast(){
     return '<div class="blast-col"><div class="blast-col-title">'+col+'<span class="fav-group-count">'+items.length+'把</span></div>'+body+'</div>';
   }).join('');
 }
-async function setBlastSlot(idx,v){if(BLAST_CACHE[idx]){BLAST_CACHE[idx].slot=parseInt(v)||1;await saveBlast();}}
 async function removeBlast(idx){BLAST_CACHE.splice(idx,1);await saveBlast();renderBlast();showToast('已移出爆破');}
 async function clearBlast(){if(!BLAST_CACHE.length||!confirm('确定清空爆破模式里的所有枪？'))return;BLAST_CACHE=[];await saveBlast();renderBlast();showToast('✅ 已清空');}
 
