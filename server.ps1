@@ -112,7 +112,8 @@ function Escape-CSV-Field($v) {
 
 
 
-function Parse-CSV($csvPath) {
+# $mode/$source 非空时直接写进每条记录，省掉 /api/data 里 JSON 反序列化 + Add-Member 再序列化的来回转换
+function Parse-CSV($csvPath, $mode = '', $source = '') {
     if (-not (Test-Path $csvPath)) { return '[]' }
     
     $lines = Get-Content $csvPath -Encoding UTF8
@@ -180,6 +181,8 @@ function Parse-CSV($csvPath) {
     # 请求卡到肉眼可见地慢。List.Add() 是均摊 O(1)，后面管道进 ConvertTo-Json/Where-Object
     # 用法不用变。
     $records = [System.Collections.Generic.List[object]]::new()
+    # 已出现的改枪码：制式套扫描去重用 HashSet 查找，替代原来每行一次 $records | Where-Object（O(n²)）
+    $seenCodes = [System.Collections.Generic.HashSet[string]]::new()
 
     for ($i = $headerRow + 1; $i -lt $lines.Count; $i++) {
         $line = $lines[$i].Trim()
@@ -249,6 +252,8 @@ function Parse-CSV($csvPath) {
             hasXiaoyin = ($note -match "消音")
             hasYao     = ($note -match "腰射")
         }
+        if ($mode) { $obj['mode'] = $mode; $obj['source'] = $source }
+        [void]$seenCodes.Add([string]$newCode)
         $records.Add($obj)
     }
 
@@ -276,8 +281,7 @@ function Parse-CSV($csvPath) {
             $col3 = if ($fields.Count -gt 3) { $fields[3].Trim() } else { "" }
             
             # 检查是否已经存在相同改枪码（避免重复）
-            $exists = $records | Where-Object { $_.code -eq $newCode }
-            if ($exists) { continue }
+            if ($seenCodes.Contains([string]$newCode)) { continue }
             
             $obj = @{
                 code       = $newCode
@@ -296,11 +300,14 @@ function Parse-CSV($csvPath) {
                 hasXiaoyin = $false
                 hasYao     = $false
             }
+            if ($mode) { $obj['mode'] = $mode; $obj['source'] = $source }
+            [void]$seenCodes.Add([string]$newCode)
             $records.Add($obj)
         }
     }
 
-    return ($records | ConvertTo-Json -Compress)
+    # -InputObject 保证始终输出 JSON 数组（管道方式 1 条时会退化成单个对象，0 条时输出空）
+    return (ConvertTo-Json -InputObject $records.ToArray() -Compress)
 }
 
 
@@ -386,6 +393,11 @@ function Send-Response($ctx, $statusCode, $contentType, $body) {
 Ensure-DataTree
 Migrate-LegacyCsv
 
+# /api/data 缓存：单文件解析结果 + 最终整包 JSON
+$script:csvJsonCache = @{}
+$script:dataJsonSig = $null
+$script:dataJson = $null
+
 while ($listener.IsListening) {
     $ctx = $listener.GetContext()
     $method = $ctx.Request.HttpMethod
@@ -431,36 +443,47 @@ while ($listener.IsListening) {
     }
 
     # API: 获取全部数据（tx + my，mode/source 作为一等字段）
+    # 性能：CSV 只在同步时才会变，所以按文件缓存解析后的 JSON（key=路径，校验=修改时间+大小），
+    # 文件没变就不重新解析；整体再缓存一份最终 JSON，全部文件没变时请求几乎是 O(1)。
+    # 拼接时直接拼各文件 JSON 字符串，不再反序列化/序列化。
     if ($path -eq "/api/data" -and $method -eq "GET") {
         try {
             Ensure-DataTree
             $dataDir = Join-Path $dir "data"
-            # List 而不是 @() + ：见 Parse-CSV 里的同款注释，这里是跨 sheet 合并，
-            # 数据越堆越多（现在 4000+ 条），O(n²) 更明显
-            $allRecords = [System.Collections.Generic.List[object]]::new()
+            $csvFiles = [System.Collections.Generic.List[object]]::new()
             foreach ($source in @('tx','my')) {
                 $sourceDir = Join-Path $dataDir $source
                 foreach ($mode in @('烽火地带','全面战场','爆破')) {
                     $modeDir = Join-Path $sourceDir $mode
                     if (-not (Test-Path $modeDir)) { continue }
                     foreach ($f in (Get-ChildItem $modeDir -Filter '*.csv' -File -ErrorAction SilentlyContinue)) {
-                        try {
-                            # 不能用 @(... | ConvertFrom-Json)：Windows PowerShell 5.1 会把整个 JSON 数组
-                            # 当成"一个对象"输出，@() 包一层就变成 [[...]]，List.Add 又不会像 += 那样展开，
-                            # 最终 /api/data 返回嵌套数组，前端每条 code/gunName 都是空 -> 一条都不显示。
-                            # 直接 foreach 会正确遍历数组元素（单对象/空数组也都没问题）。
-                            $records = Parse-CSV $f.FullName | ConvertFrom-Json
-                            foreach ($r in $records) {
-                                $r | Add-Member -NotePropertyName mode -NotePropertyValue $mode -Force
-                                $r | Add-Member -NotePropertyName source -NotePropertyValue $source -Force
-                                $allRecords.Add($r)
-                            }
-                        } catch { }
+                        $csvFiles.Add(@{ file = $f; mode = $mode; source = $source; stamp = "$($f.LastWriteTimeUtc.Ticks)|$($f.Length)" })
                     }
                 }
             }
-            $json = if ($allRecords.Count -eq 0) { '[]' } else { $allRecords | ConvertTo-Json -Depth 20 -Compress }
-        Send-Response $ctx 200 "application/json; charset=utf-8" $json
+            $sig = ($csvFiles | ForEach-Object { "$($_.file.FullName)|$($_.stamp)" }) -join ';'
+
+            if ($script:dataJsonSig -eq $sig -and $script:dataJson) {
+                $json = $script:dataJson
+            } else {
+                $parts = [System.Collections.Generic.List[string]]::new()
+                foreach ($e in $csvFiles) {
+                    $key = $e.file.FullName
+                    $hit = $script:csvJsonCache[$key]
+                    if ($hit -and $hit.stamp -eq $e.stamp) {
+                        $fileJson = $hit.json
+                    } else {
+                        try { $fileJson = [string](Parse-CSV $key $e.mode $e.source) } catch { $fileJson = '[]' }
+                        $script:csvJsonCache[$key] = @{ stamp = $e.stamp; json = $fileJson }
+                    }
+                    # 各文件 JSON 都是 [ ... ]，去掉外层括号后用逗号拼成一个大数组；空数组（长度2）跳过
+                    if ($fileJson -and $fileJson.Length -gt 2) { $parts.Add($fileJson.Substring(1, $fileJson.Length - 2)) }
+                }
+                $json = '[' + ($parts -join ',') + ']'
+                $script:dataJsonSig = $sig
+                $script:dataJson = $json
+            }
+            Send-Response $ctx 200 "application/json; charset=utf-8" $json
         } catch {
             Send-Response $ctx 500 "application/json; charset=utf-8" '{"ok":false,"err":"读取数据失败"}'
         }
