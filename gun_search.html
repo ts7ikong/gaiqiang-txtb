@@ -215,7 +215,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
     <button class="topbar-btn" onclick="showRecommend()" id="recommendBtn" style="display:none;border-color:rgba(255,170,0,.4);color:var(--yellow)">🔥 AI推荐</button>
     <button class="topbar-btn" onclick="showAddForm()" id="addBtn" style="display:none;border-color:rgba(0,208,132,.4);color:var(--green)">➕ 添加</button>
     <button class="topbar-btn" onclick="showInvalidMgr()" id="invalidBtn" style="display:none;border-color:rgba(255,71,87,.4);color:#FF4757">🚫 无效码</button>
-    <button class="topbar-btn" onclick="showTencentSync()" id="syncBtn" style="display:none;border-color:rgba(0,194,255,.4);color:var(--accent2)">🔄 腾讯同步</button>
+    <button class="topbar-btn" onclick="loadFromServer()" id="syncBtn" style="display:none;border-color:rgba(0,194,255,.4);color:var(--accent2)">🔄 刷新数据</button>
     <button class="topbar-btn" onclick="loadFromServer()" style="margin-left:auto">🔄 刷新数据</button>
   </div>
   <div class="main-body">
@@ -374,36 +374,6 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeAddModal()">取消</button>
       <button class="cbtn cbtn-write" onclick="submitAdd()">✅ 保存</button>
-    </div>
-  </div>
-</div>
-
-<!-- 腾讯文档同步弹窗 -->
-<div class="modal" id="tencentSyncModal">
-  <div class="modal-box" style="width:560px">
-    <div class="modal-title">🔄 腾讯文档一键同步</div>
-    <div style="font-size:.84rem;color:var(--sub);line-height:1.7;margin-bottom:16px">
-      以后不用再下载 50GB 文档，也不用一个个复制改枪码。只需要在腾讯文档页面点一次“同步助手”，选择需要的 Sheet 即可。
-    </div>
-    <div style="padding:14px;border:1px solid rgba(0,194,255,.25);background:rgba(0,194,255,.05);border-radius:10px;margin-bottom:14px">
-      <div style="font-weight:800;color:var(--accent2);margin-bottom:8px">第一次使用：安装同步助手</div>
-      <div style="font-size:.8rem;color:var(--sub);line-height:1.7;margin-bottom:10px">
-        1. 把下面的按钮拖到浏览器收藏夹；<br>
-        2. 打开你的腾讯文档；<br>
-        3. 在腾讯文档页面点击收藏夹里的“🔄 魔王S同步助手”。<br>
-        安装一次，以后重复使用即可。
-      </div>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <a id="tencentBookmarklet" href="#" draggable="true" style="display:inline-block;padding:9px 13px;border-radius:8px;background:linear-gradient(135deg,#00c2ff,#0090ff);color:#fff;text-decoration:none;font-weight:800;cursor:grab">🔄 魔王S同步助手</a>
-        <button class="cbtn cbtn-detail" onclick="copyTencentBookmarklet()">📋 复制安装代码</button>
-      </div>
-    </div>
-    <div style="padding:12px 14px;border:1px dashed rgba(139,92,255,.35);background:rgba(139,92,255,.04);border-radius:10px;font-size:.8rem;color:var(--sub);line-height:1.7">
-      <b style="color:#B380FF">同步原理：</b>同步助手在腾讯文档页面内使用你当前的登录状态读取数据，然后只把解析后的改枪码发送到本地 8080 服务。不会把 Cookie 上传给本工具。
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:18px">
-      <button class="btn-cancel" onclick="closeTencentSync()">关闭</button>
-      <button class="cbtn cbtn-write" onclick="refreshAfterTencentSync()">🔄 同步后刷新本地数据</button>
     </div>
   </div>
 </div>
@@ -1100,37 +1070,6 @@ function showMain2(){
   setDisplay('mainSection','block');
 }
 function resetToUpload(){loadFromServer();}
-
-// ========== 腾讯文档同步 ==========
-function getTencentBookmarklet(){
-  const code="javascript:(()=>{const s=document.createElement('script');s.src='http://localhost:8080/tencent_sync.js?t='+Date.now();document.documentElement.appendChild(s)})()";
-  return code;
-}
-function prepareTencentBookmarklet(){
-  const a=document.getElementById('tencentBookmarklet');
-  if(a) a.href=getTencentBookmarklet();
-}
-function showTencentSync(){
-  prepareTencentBookmarklet();
-  document.getElementById('tencentSyncModal').classList.add('open');
-}
-function closeTencentSync(){document.getElementById('tencentSyncModal').classList.remove('open');}
-function copyTencentBookmarklet(){
-  const code=getTencentBookmarklet();
-  copy(code,'同步助手安装代码');
-}
-async function refreshAfterTencentSync(){
-  try{
-    const resp=await fetch(API_BASE+'/api/data');
-    const records=await resp.json();
-    if(!Array.isArray(records)||!records.length){showToast('❌ 暂时没有读取到本地数据');return;}
-    ALL_DATA=records.flat(Infinity).map(normalizeRecord).filter(d=>d.code && d.gunName);
-    document.getElementById('topbarFile').textContent='📄 data目录('+ALL_DATA.length+'条)';
-    closeTencentSync();
-    showMain();
-    showToast('✅ 已刷新，共'+ALL_DATA.length+'条');
-  }catch(e){showToast('❌ 刷新失败：'+e.message);}
-}
 
 // ========== 添加改枪码 ==========
 function showAddForm(){
