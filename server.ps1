@@ -445,7 +445,11 @@ while ($listener.IsListening) {
                     if (-not (Test-Path $modeDir)) { continue }
                     foreach ($f in (Get-ChildItem $modeDir -Filter '*.csv' -File -ErrorAction SilentlyContinue)) {
                         try {
-                            $records = @(Parse-CSV $f.FullName | ConvertFrom-Json)
+                            # 不能用 @(... | ConvertFrom-Json)：Windows PowerShell 5.1 会把整个 JSON 数组
+                            # 当成"一个对象"输出，@() 包一层就变成 [[...]]，List.Add 又不会像 += 那样展开，
+                            # 最终 /api/data 返回嵌套数组，前端每条 code/gunName 都是空 -> 一条都不显示。
+                            # 直接 foreach 会正确遍历数组元素（单对象/空数组也都没问题）。
+                            $records = Parse-CSV $f.FullName | ConvertFrom-Json
                             foreach ($r in $records) {
                                 $r | Add-Member -NotePropertyName mode -NotePropertyValue $mode -Force
                                 $r | Add-Member -NotePropertyName source -NotePropertyValue $source -Force

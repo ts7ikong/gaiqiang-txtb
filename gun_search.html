@@ -795,7 +795,7 @@ async function loadFromServer(){
     if(!resp.ok) throw new Error('HTTP '+resp.status);
     const raw=await resp.json();
     if(!Array.isArray(raw)) throw new Error('API返回格式错误：不是数组');
-    ALL_DATA=raw.map(normalizeRecord).filter(d=>d.code && d.gunName);
+    ALL_DATA=raw.flat(Infinity).map(normalizeRecord).filter(d=>d.code && d.gunName); // flat：兜底展开服务端可能返回的嵌套数组
     setText('topbarFile','📄 data目录('+ALL_DATA.length+'条)');
     try{ showMain(); }
     catch(err){ console.error('[gun_search] render error:',err); throw new Error('数据读取成功，但页面渲染失败：'+(err.message||err)); }
@@ -1006,12 +1006,12 @@ async function refreshAfterTencentSync(){
   try{
     const resp=await fetch(API_BASE+'/api/data');
     const records=await resp.json();
-    if(!records||!records.length){showToast('❌ 暂时没有读取到本地数据');return;}
-    ALL_DATA=records;
-    document.getElementById('topbarFile').textContent='📄 data目录('+records.length+'条)';
+    if(!Array.isArray(records)||!records.length){showToast('❌ 暂时没有读取到本地数据');return;}
+    ALL_DATA=records.flat(Infinity).map(normalizeRecord).filter(d=>d.code && d.gunName);
+    document.getElementById('topbarFile').textContent='📄 data目录('+ALL_DATA.length+'条)';
     closeTencentSync();
     showMain();
-    showToast('✅ 已刷新，共'+records.length+'条');
+    showToast('✅ 已刷新，共'+ALL_DATA.length+'条');
   }catch(e){showToast('❌ 刷新失败：'+e.message);}
 }
 
