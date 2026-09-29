@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.4
+ * 魔王S 腾讯文档同步助手 v9.0.5
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -22,6 +22,10 @@
  *   映射会把 price/ammo 读成完全不相关的值。现在按 col2 是否是等级名(新兵/标准/精锐/特种/定制，
  *   与 gun_search.html 的 ZHISHI_LEVELS 一致)单独识别为制式套记录(price=等级名，sheet 打上"·制式套"，
  *   查询页 isZhishi() 靠这个认出来)；超丐专区整段跳过，不采集。
+ *   v9.0.5 修复：detectHeader 只要一行含"改枪码"三个字就认成表头，但有些 sheet 顶部的公告
+ *   说明文字（比如"此文档和前面S8一样通用改枪码..."）也会带到这三个字，导致说明行被误判成表头、
+ *   之后所有字段全部读成空值。现在要求表头行必须同时出现"改枪码"列和至少一个价格/弹夹/备注列，
+ *   单纯提一嘴"改枪码"的说明文字凑不出这个组合，不会再被当成表头。
  *
  * 不读取、不上传 Cookie；请求使用当前腾讯文档页面的登录态。
  */
@@ -263,6 +267,10 @@
           else if (t.includes('备注')) map.note ??= c;
           else if (t.includes('日期')) map.date ??= c;
         }
+        // 真正的表头行必须同时出现"改枪码"列和至少一个价格/弹夹/备注列——公告说明文字
+        // (比如"此文档和前面S8一样通用改枪码...")偶尔也会包含"改枪码"三个字，但不会同一行
+        // 还凑出价格/弹夹/备注这些列，靠这个组合条件把说明行和真表头行区分开。
+        if (map.code == null || (map.price == null && map.ammo == null && map.note == null)) continue;
         return { headerRow: r, map };
       }
       return { headerRow: -1, map: { price: 1, note: 2, code: 3, date: 4, gunId: 9 } };
@@ -542,7 +550,7 @@
     return;
   }
 
-  const VERSION = '9.0.4';
+  const VERSION = '9.0.5';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
