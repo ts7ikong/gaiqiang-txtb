@@ -1,5 +1,5 @@
 /*
- * 魔王S 腾讯文档同步助手 v9.0.3
+ * 魔王S 腾讯文档同步助手 v9.0.4
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -17,6 +17,11 @@
  *   v9.0.3 修复：body 定位错误导致解析器实际上永远返回 0 个单元格（只是被 sequenceFallback
  *   兜底逻辑掩盖了）；数字索引改用最大值反推偏移；新增 type=6 富文本解析（表头首列"改枪码"用的
  *   就是这个类型，之前完全读不到）。
+ *   v9.0.4：sheet 里"制式套装专区/标准/精锐/特种/定制"和"超丐专区"这类分区用的是另一套列布局
+ *   (col1=简称 col2=等级或类型 col3=变体)，跟主表(价格/镜子/弹夹...)对不上，套用同一份 detectHeader
+ *   映射会把 price/ammo 读成完全不相关的值。现在按 col2 是否是等级名(新兵/标准/精锐/特种/定制，
+ *   与 gun_search.html 的 ZHISHI_LEVELS 一致)单独识别为制式套记录(price=等级名，sheet 打上"·制式套"，
+ *   查询页 isZhishi() 靠这个认出来)；超丐专区整段跳过，不采集。
  *
  * 不读取、不上传 Cookie；请求使用当前腾讯文档页面的登录态。
  */
@@ -275,6 +280,12 @@
       return next > cur ? col + 1 : col;
     }
 
+    // 制式套/超丐专区这类区域在同一张 sheet 里另起了一套列布局(col1=简称 col2=等级/类型 col3=变体，
+    // 跟主表的 价格/镜子/弹夹 完全对不上)，不能套用 detectHeader 算出来的全局列映射，需要单独识别。
+    // 等级名清单和查询页 gun_search.html 的 ZHISHI_LEVELS 保持一致，两边靠这个字符串互认"制式套"记录。
+    const ZHISHI_LEVELS = ['新兵', '标准', '精锐', '特种', '定制'];
+    const SKIP_CATEGORIES = ['超丐专区'];
+
     function gridToRecords(grid, sheetName) {
       const rows = [...grid.entries()]
         .sort((a, b) => a[0] - b[0])
@@ -298,6 +309,33 @@
       let category = '';
       for (const [r, cols] of rows) {
         if (r <= headerRow) continue;
+
+        // 制式套区域：col2 直接是等级名，列布局跟主表不同，绝对列号读取，不走 detectHeader 的映射
+        const zhishiLevel = cellText(cols.get(2));
+        if (ZHISHI_LEVELS.includes(zhishiLevel)) {
+          const col0 = cellText(cols.get(0));
+          const zm = CODE_RE.exec(col0);
+          if (!zm) continue;
+          const zcode = zm[0].trim();
+          if (seen.has(zcode)) continue;
+          seen.add(zcode);
+          out.push({
+            row: r,
+            code: zcode,
+            gunNameRaw: zm[1].replace(/^\d+/, '').trim(),
+            mode: zm[2],
+            category: zhishiLevel,
+            price: zhishiLevel,           // 查询页 isZhishi() 靠 price 是等级名来识别制式套记录
+            ammo: '',
+            note: cellText(cols.get(3)),  // 变体类型(均衡/火力/生存)
+            date: defaultDate,
+            gunId: toId(cols.get(7)),
+            specialGunId: '',
+            sheet: sheetName + '·制式套'
+          });
+          continue;
+        }
+
         const get = k => (map[k] == null ? undefined : cols.get(map[k]));
 
         // 优先读改枪码列，读不到再扫描整行（防止列错位）
@@ -316,6 +354,8 @@
           }
           continue;
         }
+
+        if (SKIP_CATEGORIES.includes(category)) continue; // 超丐专区：列布局也对不上主表，且用户不需要这批数据
 
         const code = m[0].trim();
         if (seen.has(code)) continue;
@@ -502,7 +542,7 @@
     return;
   }
 
-  const VERSION = '9.0.3';
+  const VERSION = '9.0.4';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];

@@ -1,7 +1,7 @@
 ﻿{
   "manifest_version": 3,
   "name": "魔王S腾讯文档同步助手",
-  "version": "9.0.3",
+  "version": "9.0.4",
   "description": "从腾讯文档同步魔王S改枪码，解析普通压枪ID并按游戏模式分层存储腾讯同步数据",
   "permissions": [
     "scripting",
