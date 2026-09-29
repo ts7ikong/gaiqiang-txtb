@@ -175,8 +175,12 @@ function Parse-CSV($csvPath) {
         }
     }
     
-    $records = @()
-    
+    # 用 List 而不是 @() + 的原因：PowerShell 的 $array += $item 每次都会整份拷贝数组，
+    # 循环里用就是 O(n²)；sheet 记录数一旦上千（比如 3635 条的合集表），这个坑会让整个
+    # 请求卡到肉眼可见地慢。List.Add() 是均摊 O(1)，后面管道进 ConvertTo-Json/Where-Object
+    # 用法不用变。
+    $records = [System.Collections.Generic.List[object]]::new()
+
     for ($i = $headerRow + 1; $i -lt $lines.Count; $i++) {
         $line = $lines[$i].Trim()
         if (-not $line) { continue }
@@ -245,9 +249,9 @@ function Parse-CSV($csvPath) {
             hasXiaoyin = ($note -match "消音")
             hasYao     = ($note -match "腰射")
         }
-        $records += $obj
+        $records.Add($obj)
     }
-    
+
     # 扫描所有行，找制式套数据（价格列=等级名的行）
     $zhishiLevels = @("新兵","标准","精锐","特种","定制")
     for ($i = 0; $i -lt $lines.Count; $i++) {
@@ -292,10 +296,10 @@ function Parse-CSV($csvPath) {
                 hasXiaoyin = $false
                 hasYao     = $false
             }
-            $records += $obj
+            $records.Add($obj)
         }
     }
-    
+
     return ($records | ConvertTo-Json -Compress)
 }
 
@@ -431,7 +435,9 @@ while ($listener.IsListening) {
         try {
             Ensure-DataTree
             $dataDir = Join-Path $dir "data"
-            $allRecords = @()
+            # List 而不是 @() + ：见 Parse-CSV 里的同款注释，这里是跨 sheet 合并，
+            # 数据越堆越多（现在 4000+ 条），O(n²) 更明显
+            $allRecords = [System.Collections.Generic.List[object]]::new()
             foreach ($source in @('tx','my')) {
                 $sourceDir = Join-Path $dataDir $source
                 foreach ($mode in @('烽火地带','全面战场','爆破')) {
@@ -443,13 +449,13 @@ while ($listener.IsListening) {
                             foreach ($r in $records) {
                                 $r | Add-Member -NotePropertyName mode -NotePropertyValue $mode -Force
                                 $r | Add-Member -NotePropertyName source -NotePropertyValue $source -Force
-                                $allRecords += $r
+                                $allRecords.Add($r)
                             }
                         } catch { }
                     }
                 }
             }
-            $json = if (@($allRecords).Count -eq 0) { '[]' } else { @($allRecords) | ConvertTo-Json -Depth 20 -Compress }
+            $json = if ($allRecords.Count -eq 0) { '[]' } else { $allRecords | ConvertTo-Json -Depth 20 -Compress }
         Send-Response $ctx 200 "application/json; charset=utf-8" $json
         } catch {
             Send-Response $ctx 500 "application/json; charset=utf-8" '{"ok":false,"err":"读取数据失败"}'
@@ -612,9 +618,12 @@ while ($listener.IsListening) {
                 $existingMap[$code] = $normalized
             }
 
-            $lines = @("改枪码（游戏内使用）,价格,弹夹,备注,日期,控枪编号（网页使用）,特殊子弹ID")
+            # List 而不是 @() + ：同一张表反复同步、记录越攒越多（合集表已经3635条），
+            # $lines += 这种写法每次都拷贝整个数组，会让同步接口越用越慢
+            $lines = [System.Collections.Generic.List[string]]::new()
+            $lines.Add("改枪码（游戏内使用）,价格,弹夹,备注,日期,控枪编号（网页使用）,特殊子弹ID")
             foreach ($item in $existingMap.Values) {
-                $lines += "$(Escape-CSV-Field $item.code),$(Escape-CSV-Field $item.price),$(Escape-CSV-Field $item.ammo),$(Escape-CSV-Field $item.note),$(Escape-CSV-Field $item.date),$(Escape-CSV-Field $item.gunId),$(Escape-CSV-Field $item.specialGunId)"
+                $lines.Add("$(Escape-CSV-Field $item.code),$(Escape-CSV-Field $item.price),$(Escape-CSV-Field $item.ammo),$(Escape-CSV-Field $item.note),$(Escape-CSV-Field $item.date),$(Escape-CSV-Field $item.gunId),$(Escape-CSV-Field $item.specialGunId)")
             }
             $lines | Out-File $csvPath -Encoding UTF8
 
