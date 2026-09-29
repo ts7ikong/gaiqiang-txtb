@@ -329,7 +329,7 @@ function Ensure-DataTree() {
         $path = if ($sub -in @('烽火地带','全面战场','爆破')) { Join-Path (Join-Path $dataDir 'tx') $sub } else { Join-Path $dataDir $sub }
         if (-not (Test-Path $path)) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
     }
-    foreach ($file in @('favorites.json','invalid.json','config.json')) {
+    foreach ($file in @('favorites.json','invalid.json','blast.json','config.json')) {
         $path = Join-Path $dataDir $file
         if (-not (Test-Path $path)) {
             if ($file -eq 'config.json') { '{"schemaVersion":2,"defaultMode":"烽火地带"}' | Out-File $path -Encoding UTF8 }
@@ -515,6 +515,24 @@ while ($listener.IsListening) {
             $reader = New-Object System.IO.StreamReader($ctx.Request.InputStream,[System.Text.Encoding]::UTF8); $body=$reader.ReadToEnd(); $reader.Close()
             $data=$body | ConvertFrom-Json
             Ensure-DataTree; Write-JsonArray (Join-Path $dir 'data/favorites.json') @($data.items)
+            Send-Response $ctx 200 "application/json; charset=utf-8" '{"ok":true}'
+        } catch { Send-Response $ctx 500 "application/json; charset=utf-8" '{"ok":false}' }
+        continue
+    }
+
+    # API: 获取/保存爆破模式列表（每项带 col：手枪/标准/精锐/特种，以及写入用的槽位 slot）
+    if ($path -eq "/api/blast" -and $method -eq "GET") {
+        Ensure-DataTree
+        $items = @(Read-JsonArray (Join-Path $dir 'data/blast.json'))
+        $json = if ($items.Count -eq 0) { '[]' } else { ConvertTo-Json -InputObject $items -Depth 20 -Compress }
+        Send-Response $ctx 200 "application/json; charset=utf-8" $json
+        continue
+    }
+    if ($path -eq "/api/blast" -and $method -eq "POST") {
+        try {
+            $reader = New-Object System.IO.StreamReader($ctx.Request.InputStream,[System.Text.Encoding]::UTF8); $body=$reader.ReadToEnd(); $reader.Close()
+            $data=$body | ConvertFrom-Json
+            Ensure-DataTree; Write-JsonArray (Join-Path $dir 'data/blast.json') @($data.items)
             Send-Response $ctx 200 "application/json; charset=utf-8" '{"ok":true}'
         } catch { Send-Response $ctx 500 "application/json; charset=utf-8" '{"ok":false}' }
         continue

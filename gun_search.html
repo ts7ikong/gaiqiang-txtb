@@ -169,6 +169,23 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
 .rec-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px}
 .rec-header{display:flex;align-items:center;gap:10px;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)}
 
+/* 爆破模式 */
+.cbtn-blast{background:rgba(255,159,67,.12);color:#FF9F43;border:1.5px solid rgba(255,159,67,.35)}
+.cbtn-blast:hover{background:rgba(255,159,67,.22)}
+.blast-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:start}
+.blast-col{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:12px;min-height:160px}
+.blast-col-title{font-size:.95rem;font-weight:800;color:#FF9F43;display:flex;align-items:center;gap:8px;padding-bottom:10px;margin-bottom:10px;border-bottom:1px solid var(--border)}
+.blast-item{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
+.blast-item-name{font-weight:800;font-size:.9rem;margin-bottom:3px;word-break:break-all}
+.blast-item-meta{font-size:.74rem;color:var(--sub);margin-bottom:6px;line-height:1.5;word-break:break-all}
+.blast-item-id{font-family:monospace;font-size:.76rem;color:var(--accent2);margin-bottom:6px}
+.blast-item-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.blast-item-actions .cbtn{padding:5px 9px;font-size:.74rem}
+.blast-empty{color:var(--sub);font-size:.8rem;text-align:center;padding:24px 0}
+.blast-pick-btn{width:100%;padding:12px;margin-bottom:8px;border-radius:10px;border:1.5px solid rgba(255,159,67,.35);background:rgba(255,159,67,.1);color:#FF9F43;font-weight:800;font-size:.95rem;cursor:pointer;display:flex;justify-content:space-between}
+.blast-pick-btn:hover{background:rgba(255,159,67,.22)}
+@media(max-width:900px){.blast-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.blast-grid{grid-template-columns:1fr}}
 @media(max-width:600px){.topbar{padding:10px 14px}.main-body{padding:14px}.card-header{flex-direction:column}}
 </style>
 </head>
@@ -194,6 +211,7 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
     <div class="topbar-file" id="topbarFile"></div>
     <button class="topbar-btn" onclick="showFav()" id="favBtn" style="display:none">⭐ 收藏夹</button>
     <button class="topbar-btn" onclick="showZhishi()" id="zhishiBtn" style="display:none;border-color:rgba(139,92,255,.4);color:#B380FF">🎖 制式套</button>
+    <button class="topbar-btn" onclick="showBlast()" id="blastBtn" style="display:none;border-color:rgba(255,159,67,.4);color:#FF9F43">💣 爆破模式</button>
     <button class="topbar-btn" onclick="showRecommend()" id="recommendBtn" style="display:none;border-color:rgba(255,170,0,.4);color:var(--yellow)">🔥 AI推荐</button>
     <button class="topbar-btn" onclick="showAddForm()" id="addBtn" style="display:none;border-color:rgba(0,208,132,.4);color:var(--green)">➕ 添加</button>
     <button class="topbar-btn" onclick="showInvalidMgr()" id="invalidBtn" style="display:none;border-color:rgba(255,71,87,.4);color:#FF4757">🚫 无效码</button>
@@ -277,6 +295,24 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
       <span id="zhishiCount" style="font-size:.82rem;color:var(--sub)"></span>
     </div>
     <div id="zhishiContent"></div>
+  </div>
+</div>
+
+<!-- 爆破模式页 -->
+<div id="blastSection" style="display:none;position:relative;z-index:1">
+  <div class="topbar">
+    <div class="topbar-logo">💣 爆破模式</div>
+    <button class="device-status disconnected" id="blastDeviceBtn" onclick="toggleDevice()">
+      <div class="device-dot"></div>
+      <span id="blastDeviceText">连接压枪器</span>
+    </button>
+    <span id="blastCount" style="font-size:.82rem;color:var(--sub)"></span>
+    <button class="topbar-btn" style="margin-left:auto;border-color:rgba(255,71,87,.4);color:#FF4757" onclick="clearBlast()">🗑 清空全部</button>
+    <button class="topbar-btn" onclick="showMain2()">← 返回</button>
+  </div>
+  <div class="main-body">
+    <div style="font-size:.8rem;color:var(--sub);margin-bottom:14px">在首页、收藏夹、制式套的枪械卡片上点「💣 加入爆破」，选一列加入；这里每把枪选好槽位后可直接写入压枪器。</div>
+    <div id="blastContent" class="blast-grid"></div>
   </div>
 </div>
 
@@ -387,6 +423,15 @@ body::before{content:'';position:fixed;top:0;left:0;width:100%;height:100%;
   </div>
 </div>
 
+  </div>
+</div>
+
+<div class="modal" id="blastPickModal">
+  <div class="modal-box" style="width:340px">
+    <div class="modal-title">💣 加入爆破模式</div>
+    <div id="blastPickGun" style="font-size:.85rem;color:var(--sub);margin:-8px 0 16px;word-break:break-all"></div>
+    <div id="blastPickBtns"></div>
+    <div class="modal-footer"><button class="btn-cancel" onclick="closeBlastPick()">取消</button></div>
   </div>
 </div>
 
@@ -602,6 +647,8 @@ function setDeviceStatus(status) {
   const text = document.getElementById('deviceText');
   btn.className = 'device-status '+status;
   text.textContent = status==='connected'?'已连接':status==='connecting'?'连接中...':'连接压枪器';
+  const bb = document.getElementById('blastDeviceBtn'), bt = document.getElementById('blastDeviceText');
+  if (bb && bt) { bb.className = 'device-status '+status; bt.textContent = text.textContent; }
   document.querySelectorAll('.cbtn-write').forEach(b => { b.disabled = status!=='connected'; });
 }
 
@@ -692,6 +739,7 @@ async function loadPersistentData(){
     FAV_CACHE=fr.ok?await fr.json():[]; INVALID_CACHE=ir.ok?await ir.json():[];
     if(!FAV_CACHE.length){try{const old=JSON.parse(localStorage.getItem('gun_favs')||'[]');if(old.length){FAV_CACHE=old.map(x=>({...x,mode:x.mode||'烽火地带'}));await saveFavs(FAV_CACHE);}}catch{}}
     if(!INVALID_CACHE.length){try{const old=JSON.parse(localStorage.getItem('invalid_codes')||'[]');if(old.length){INVALID_CACHE=old.map(x=>typeof x==='string'?{code:x,mode:'烽火地带'}:x);await saveInvalidCodes(INVALID_CACHE);}}catch{}}
+    try{const br=await fetch(apiUrl('/api/blast'));const bj=br.ok?await br.json():[];BLAST_CACHE=Array.isArray(bj)?bj.flat(Infinity):[];}catch{BLAST_CACHE=[];}
     PERSIST_READY=true;
   }catch(e){PERSIST_READY=false;console.warn('持久化数据加载失败',e);}
 }
@@ -739,7 +787,7 @@ function renderFav(){
   if(!all.length){container.innerHTML='<div class="fav-empty"><div style="font-size:3rem">⭐</div><div style="margin-top:12px">暂无收藏</div></div>';return;}
   if(!favs.length){container.innerHTML='<div class="fav-empty"><div style="font-size:2rem">🔍</div><div style="margin-top:12px">该枪暂无收藏</div></div>';return;}
   const groups={};favs.forEach(d=>{if(!groups[d.gunName])groups[d.gunName]=[];groups[d.gunName].push(d);});
-  container.innerHTML=Object.entries(groups).map(([name,items])=>`<div class="fav-group"><div class="fav-group-title">🔫 ${name}<span class="fav-group-count">${items.length}条</span></div>${items.map(d=>{const code=d.code.replace(/'/g,"\\'");const key=recordKey(d).replace(/'/g,"\\'");return `<div class="fav-card"><div class="fav-card-top"><div style="display:flex;align-items:center;gap:8px"><span class="cmeta"><span class="cmeta-label">模式</span><span class="price-c">${d.mode||'烽火地带'}</span></span><span class="cmeta"><span class="cmeta-label">价格</span><span class="price-c">${d.price}</span></span><span class="cmeta"><span class="cmeta-label">弹夹</span><span class="ammo-c">${d.ammo}</span></span></div><span class="cdate">${d.date}</span></div><div class="fav-note">📝 ${d.note}</div><div class="fav-code">${d.code}</div><div class="fav-actions"><button class="cbtn cbtn-code" onclick="copy('${code}','改枪码')">📋 复制改枪码</button><button class="cbtn cbtn-unfav" onclick="removeFavByKey('${key}')">🗑 取消</button></div></div>`;}).join('')}</div>`).join('');
+  container.innerHTML=Object.entries(groups).map(([name,items])=>`<div class="fav-group"><div class="fav-group-title">🔫 ${name}<span class="fav-group-count">${items.length}条</span></div>${items.map(d=>{const code=d.code.replace(/'/g,"\\'");const key=recordKey(d).replace(/'/g,"\\'");return `<div class="fav-card"><div class="fav-card-top"><div style="display:flex;align-items:center;gap:8px"><span class="cmeta"><span class="cmeta-label">模式</span><span class="price-c">${d.mode||'烽火地带'}</span></span><span class="cmeta"><span class="cmeta-label">价格</span><span class="price-c">${d.price}</span></span><span class="cmeta"><span class="cmeta-label">弹夹</span><span class="ammo-c">${d.ammo}</span></span></div><span class="cdate">${d.date}</span></div><div class="fav-note">📝 ${d.note}</div><div class="fav-code">${d.code}</div><div class="fav-actions"><button class="cbtn cbtn-code" onclick="copy('${code}','改枪码')">📋 复制改枪码</button><button class="cbtn cbtn-blast" onclick="openBlastPick('${code}','${d.mode||'烽火地带'}')">💣 加入爆破</button><button class="cbtn cbtn-unfav" onclick="removeFavByKey('${key}')">🗑 取消</button></div></div>`;}).join('')}</div>`).join('');
 }
 async function removeFavByKey(key){await saveFavs(getFavs().filter(f=>recordKey(f)!==key));renderFav();render();showToast('已取消收藏');}
 async function clearAllFavs(){if(!confirm('确定清空所有收藏？'))return;try{await fetch(apiUrl('/api/favorites/reset'),{method:'POST'});}catch{}FAV_CACHE=[];renderFav();render();showToast('✅ 已清空');}
@@ -888,7 +936,7 @@ function renderZhishi(){
       (hasId?`<button class="cbtn cbtn-id" onclick="copy('${esc(d.gunId)}','压枪编码（ID）')">📋 复制压枪编码</button>`+
         `<select id="${slotId}" class="form-input" style="width:auto;padding:5px 8px"><option value="1">第1把</option><option value="2">第2把</option><option value="3">第3把</option><option value="4">第4把</option><option value="5">第5把</option><option value="6">第6把</option></select>`+
         `<button class="cbtn cbtn-write" ${isConnected()?'':'disabled'} onclick="writeConfig('${esc(d.gunId)}',parseInt(document.getElementById('${slotId}').value),this)">⚡ 写入压枪器</button>`:'')+
-      `</div></div>`;
+      `<button class="cbtn cbtn-blast" onclick="openBlastPick('${esc(shortCode)}','${d.mode||'烽火地带'}')">💣 加入爆破</button></div></div>`;
   }).join('');
 }
 
@@ -941,6 +989,7 @@ function render(){
       (hasId?'<button class="cbtn cbtn-write" '+(isConnected()?'':'disabled')+' onclick="writeConfig(\''+d.gunId+'\',parseInt(document.getElementById(\''+slotId+'\').value),this)">⚡ 写入压枪器</button>':'')+
       (hasSpecialId?'<button class="cbtn cbtn-write" '+(isConnected()?'':'disabled')+' onclick="writeConfig(\''+d.specialGunId+'\',parseInt(document.getElementById(\''+slotId+'\').value),this)">🎯 写入特殊子弹</button>':'')+
       '<button class="cbtn cbtn-fav '+(faved?'faved':'')+'" data-fav-code="'+d.code+'" onclick="handleFavClick(this, \''+d.code.replace(/'/g,"\\'")+'\')">'+(faved?'⭐ 已收藏':'☆ 收藏')+'</button>'+
+      '<button class="cbtn cbtn-blast" onclick="openBlastPick(\''+d.code.replace(/\\/g,'\\\\').replace(/\'/g,"\\'")+'\',\''+d.mode+'\')">💣 加入爆破</button>'+
       '<button class="cbtn cbtn-invalid" onclick="markInvalid(this,\''+d.code.replace(/'/g,"\\'")+'\')">🚫 无效</button>'+
       '<button class="cbtn cbtn-detail" onclick="toggleDetail(this)">📖 详情</button>'+
       '</div>'+
@@ -959,6 +1008,67 @@ function render(){
 
 function toggleDetail(btn){const p=btn.closest('.gun-card').querySelector('.detail-panel');p.classList.toggle('open');btn.textContent=p.classList.contains('open')?'📖 收起':'📖 详情';}
 
+// ========== 爆破模式 ==========
+const BLAST_COLS=['手枪','标准','精锐','特种'];
+let BLAST_CACHE=[], PENDING_BLAST=null;
+function jsq(v){return String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+async function saveBlast(){
+  try{await fetch(apiUrl('/api/blast'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:BLAST_CACHE})});}
+  catch(e){showToast('⚠ 爆破列表保存失败');}
+}
+function openBlastPick(code,mode){
+  mode=mode||'烽火地带';
+  const hit=x=>x.code===code&&(x.mode||'烽火地带')===mode;
+  const d=ALL_DATA.find(hit)||FAV_CACHE.find(hit);
+  if(!d){showToast('❌ 未找到该记录');return;}
+  PENDING_BLAST=d;
+  document.getElementById('blastPickGun').textContent=d.gunName+(d.note?' · '+d.note:'');
+  document.getElementById('blastPickBtns').innerHTML=BLAST_COLS.map(col=>{
+    const has=BLAST_CACHE.some(x=>x.col===col&&recordKey(x)===recordKey(d));
+    const n=BLAST_CACHE.filter(x=>x.col===col).length;
+    return '<button class="blast-pick-btn" onclick="addToBlast(\''+col+'\')"><span>'+col+'</span><span style="font-weight:400;font-size:.78rem">'+(has?'已在此列':n+'把')+'</span></button>';
+  }).join('');
+  document.getElementById('blastPickModal').classList.add('open');
+}
+function closeBlastPick(){document.getElementById('blastPickModal').classList.remove('open');PENDING_BLAST=null;}
+async function addToBlast(col){
+  const d=PENDING_BLAST; if(!d) return;
+  if(BLAST_CACHE.some(x=>x.col===col&&recordKey(x)===recordKey(d))){showToast('该枪已在「'+col+'」列');return;}
+  BLAST_CACHE.push({col,code:d.code,gunName:d.gunName,gunId:d.gunId||'',specialGunId:d.specialGunId||'',mode:d.mode||'烽火地带',price:d.price||'',note:d.note||'',slot:1,addedAt:Date.now()});
+  closeBlastPick();
+  await saveBlast();
+  showToast('💣 已加入爆破「'+col+'」');
+  if(document.getElementById('blastSection').style.display==='block') renderBlast();
+}
+function showBlast(){hideAll();setDisplay('blastSection','block');renderBlast();setDeviceStatus(isConnected()?'connected':'disconnected');}
+function renderBlast(){
+  const el=document.getElementById('blastContent'); if(!el) return;
+  setText('blastCount','共'+BLAST_CACHE.length+'把');
+  el.innerHTML=BLAST_COLS.map(col=>{
+    const items=BLAST_CACHE.map((x,idx)=>({x,idx})).filter(o=>o.x.col===col);
+    const body=items.length?items.map(({x,idx})=>{
+      const hasId=x.gunId&&x.gunId!=='nan', hasSp=x.specialGunId&&x.specialGunId!=='nan';
+      const sid='bl-slot-'+idx, slot=x.slot||1;
+      const opts=[1,2,3,4,5,6].map(n=>'<option value="'+n+'"'+(n===slot?' selected':'')+'>第'+n+'把</option>').join('');
+      const dis=isConnected()?'':' disabled';
+      return '<div class="blast-item"><div class="blast-item-name">'+x.gunName+'</div>'+
+        '<div class="blast-item-meta">'+[x.price,x.note].filter(Boolean).join(' · ')+'</div>'+
+        (hasId?'<div class="blast-item-id">ID '+x.gunId+'</div>':'')+
+        '<div class="blast-item-actions">'+
+        ((hasId||hasSp)?'<select id="'+sid+'" class="form-input" style="width:auto;padding:4px 6px;font-size:.74rem" onchange="setBlastSlot('+idx+',this.value)">'+opts+'</select>':'')+
+        (hasId?'<button class="cbtn cbtn-write"'+dis+' onclick="writeConfig(\''+jsq(x.gunId)+'\',parseInt(document.getElementById(\''+sid+'\').value),this)">⚡ 写入压枪器</button>':'')+
+        (hasSp?'<button class="cbtn cbtn-write"'+dis+' onclick="writeConfig(\''+jsq(x.specialGunId)+'\',parseInt(document.getElementById(\''+sid+'\').value),this)">🎯 特殊子弹</button>':'')+
+        '<button class="cbtn cbtn-code" onclick="copy(\''+jsq(x.code)+'\',\'改枪码\')">📋 改枪码</button>'+
+        '<button class="cbtn cbtn-unfav" onclick="removeBlast('+idx+')">✕</button>'+
+        '</div></div>';
+    }).join(''):'<div class="blast-empty">暂无，去其他页面点「💣 加入爆破」</div>';
+    return '<div class="blast-col"><div class="blast-col-title">'+col+'<span class="fav-group-count">'+items.length+'把</span></div>'+body+'</div>';
+  }).join('');
+}
+async function setBlastSlot(idx,v){if(BLAST_CACHE[idx]){BLAST_CACHE[idx].slot=parseInt(v)||1;await saveBlast();}}
+async function removeBlast(idx){BLAST_CACHE.splice(idx,1);await saveBlast();renderBlast();showToast('已移出爆破');}
+async function clearBlast(){if(!BLAST_CACHE.length||!confirm('确定清空爆破模式里的所有枪？'))return;BLAST_CACHE=[];await saveBlast();renderBlast();showToast('✅ 已清空');}
+
 // ========== 页面切换 ==========
 function setText(id, text){
   const el=document.getElementById(id);
@@ -969,14 +1079,14 @@ function setDisplay(id, display){
   if(el) el.style.display=display;
 }
 function hideAll(){
-  ['mainSection','favSection','zhishiSection','recommendSection'].forEach(id=>setDisplay(id,'none'));
+  ['mainSection','favSection','zhishiSection','blastSection','recommendSection'].forEach(id=>setDisplay(id,'none'));
 }
 function showMain(){
   hideAll();
   setDisplay('uploadSection','none');
   setDisplay('parseLoading','none');
   setDisplay('mainSection','block');
-  ['favBtn','zhishiBtn','recommendBtn','addBtn','invalidBtn','syncBtn'].forEach(id=>setDisplay(id,'inline-flex'));
+  ['favBtn','zhishiBtn','blastBtn','recommendBtn','addBtn','invalidBtn','syncBtn'].forEach(id=>setDisplay(id,'inline-flex'));
 
   if(!window.__priceListenersBound){
     const priceMin=document.getElementById('priceMin');
