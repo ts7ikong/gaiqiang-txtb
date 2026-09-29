@@ -18,9 +18,6 @@ Write-Host "  http://localhost:8080/gun_search.html"
 Write-Host "  关闭此窗口即可停止服务"
 Write-Host "========================================"
 
-Start-Sleep -Milliseconds 800
-Start-Process "http://localhost:8080/gun_search.html"
-
 function Get-MimeType($ext) {
     switch ($ext) {
         '.html' { return 'text/html; charset=utf-8' }
@@ -389,6 +386,49 @@ function Send-Response($ctx, $statusCode, $contentType, $body) {
     $ctx.Response.Close()
 }
 
+# 读取全部数据的 JSON（tx + my，mode/source 作为一等字段）
+# 性能：CSV 只在同步时才会变，所以按文件缓存解析后的 JSON（key=路径，校验=修改时间+大小），
+# 文件没变就不重新解析；整体再缓存一份最终 JSON，全部文件没变时几乎是 O(1)。
+# 拼接时直接拼各文件 JSON 字符串，不再反序列化/序列化。启动时也会调用一次做预热。
+function Get-AllDataJson() {
+    Ensure-DataTree
+    $dataDir = Join-Path $dir "data"
+    $csvFiles = [System.Collections.Generic.List[object]]::new()
+    foreach ($source in @('tx','my')) {
+        $sourceDir = Join-Path $dataDir $source
+        foreach ($mode in @('烽火地带','全面战场','爆破')) {
+            $modeDir = Join-Path $sourceDir $mode
+            if (-not (Test-Path $modeDir)) { continue }
+            foreach ($f in (Get-ChildItem $modeDir -Filter '*.csv' -File -ErrorAction SilentlyContinue)) {
+                $csvFiles.Add(@{ file = $f; mode = $mode; source = $source; stamp = "$($f.LastWriteTimeUtc.Ticks)|$($f.Length)" })
+            }
+        }
+    }
+    $sig = ($csvFiles | ForEach-Object { "$($_.file.FullName)|$($_.stamp)" }) -join ';'
+
+    if ($script:dataJsonSig -eq $sig -and $script:dataJson) {
+        $json = $script:dataJson
+    } else {
+        $parts = [System.Collections.Generic.List[string]]::new()
+        foreach ($e in $csvFiles) {
+            $key = $e.file.FullName
+            $hit = $script:csvJsonCache[$key]
+            if ($hit -and $hit.stamp -eq $e.stamp) {
+                $fileJson = $hit.json
+            } else {
+                try { $fileJson = [string](Parse-CSV $key $e.mode $e.source) } catch { $fileJson = '[]' }
+                $script:csvJsonCache[$key] = @{ stamp = $e.stamp; json = $fileJson }
+            }
+            # 各文件 JSON 都是 [ ... ]，去掉外层括号后用逗号拼成一个大数组；空数组（长度2）跳过
+            if ($fileJson -and $fileJson.Length -gt 2) { $parts.Add($fileJson.Substring(1, $fileJson.Length - 2)) }
+        }
+        $json = '[' + ($parts -join ',') + ']'
+        $script:dataJsonSig = $sig
+        $script:dataJson = $json
+    }
+    return $json
+}
+
 # 初始化新版数据目录，并迁移旧版根目录 CSV
 Ensure-DataTree
 Migrate-LegacyCsv
@@ -397,6 +437,15 @@ Migrate-LegacyCsv
 $script:csvJsonCache = @{}
 $script:dataJsonSig = $null
 $script:dataJson = $null
+
+# 预热：启动时先解析一遍并写入缓存，浏览器第一次打开页面就不用再等解析
+Write-Host "  正在预热数据缓存..."
+$warmSw = [System.Diagnostics.Stopwatch]::StartNew()
+try { [void](Get-AllDataJson); Write-Host ("  数据缓存就绪，用时 {0} 毫秒" -f $warmSw.ElapsedMilliseconds) }
+catch { Write-Host "  数据预热失败（不影响使用，首次请求时会重新加载）" }
+
+# 预热完成后再打开浏览器
+Start-Process "http://localhost:8080/gun_search.html"
 
 while ($listener.IsListening) {
     $ctx = $listener.GetContext()
@@ -442,47 +491,10 @@ while ($listener.IsListening) {
         continue
     }
 
-    # API: 获取全部数据（tx + my，mode/source 作为一等字段）
-    # 性能：CSV 只在同步时才会变，所以按文件缓存解析后的 JSON（key=路径，校验=修改时间+大小），
-    # 文件没变就不重新解析；整体再缓存一份最终 JSON，全部文件没变时请求几乎是 O(1)。
-    # 拼接时直接拼各文件 JSON 字符串，不再反序列化/序列化。
+    # API: 获取全部数据（逻辑见 Get-AllDataJson，带缓存）
     if ($path -eq "/api/data" -and $method -eq "GET") {
         try {
-            Ensure-DataTree
-            $dataDir = Join-Path $dir "data"
-            $csvFiles = [System.Collections.Generic.List[object]]::new()
-            foreach ($source in @('tx','my')) {
-                $sourceDir = Join-Path $dataDir $source
-                foreach ($mode in @('烽火地带','全面战场','爆破')) {
-                    $modeDir = Join-Path $sourceDir $mode
-                    if (-not (Test-Path $modeDir)) { continue }
-                    foreach ($f in (Get-ChildItem $modeDir -Filter '*.csv' -File -ErrorAction SilentlyContinue)) {
-                        $csvFiles.Add(@{ file = $f; mode = $mode; source = $source; stamp = "$($f.LastWriteTimeUtc.Ticks)|$($f.Length)" })
-                    }
-                }
-            }
-            $sig = ($csvFiles | ForEach-Object { "$($_.file.FullName)|$($_.stamp)" }) -join ';'
-
-            if ($script:dataJsonSig -eq $sig -and $script:dataJson) {
-                $json = $script:dataJson
-            } else {
-                $parts = [System.Collections.Generic.List[string]]::new()
-                foreach ($e in $csvFiles) {
-                    $key = $e.file.FullName
-                    $hit = $script:csvJsonCache[$key]
-                    if ($hit -and $hit.stamp -eq $e.stamp) {
-                        $fileJson = $hit.json
-                    } else {
-                        try { $fileJson = [string](Parse-CSV $key $e.mode $e.source) } catch { $fileJson = '[]' }
-                        $script:csvJsonCache[$key] = @{ stamp = $e.stamp; json = $fileJson }
-                    }
-                    # 各文件 JSON 都是 [ ... ]，去掉外层括号后用逗号拼成一个大数组；空数组（长度2）跳过
-                    if ($fileJson -and $fileJson.Length -gt 2) { $parts.Add($fileJson.Substring(1, $fileJson.Length - 2)) }
-                }
-                $json = '[' + ($parts -join ',') + ']'
-                $script:dataJsonSig = $sig
-                $script:dataJson = $json
-            }
+            $json = Get-AllDataJson
             Send-Response $ctx 200 "application/json; charset=utf-8" $json
         } catch {
             Send-Response $ctx 500 "application/json; charset=utf-8" '{"ok":false,"err":"读取数据失败"}'
