@@ -460,6 +460,10 @@ let ALL_DATA = [], currentSearch = '', currentSort = 'date';
 let activeFilters = new Set(), priceMin = 0, priceMax = 93;
 let currentZhishiFilter = 'all', currentGunCode = '';
 let hidDevice = null;
+const PAGE_SIZE = 50;
+let RENDER_DATA = [], RENDER_CARD = null, RENDER_SHOWN = 0;
+// 滚动到"加载更多"提示条时自动追加下一批（rootMargin 提前 400px 触发，滚动更顺）
+const LOAD_OBSERVER = new IntersectionObserver(es=>{ if(es.some(e=>e.isIntersecting)) renderMore(); },{rootMargin:'400px'});
 
 // ========== 工具函数 ==========
 function getGunName(code) {
@@ -932,7 +936,7 @@ function render(){
   document.getElementById('statsBar').innerHTML='<span class="stat-chip">✅ 精校 '+data.filter(d=>d.hasJiao).length+'</span><span class="stat-chip">🫁 屏息 '+data.filter(d=>d.hasPingxi).length+'</span><span class="stat-chip">🔇 消音 '+data.filter(d=>d.hasXiaoyin).length+'</span><span class="stat-chip">🦵 腰射 '+data.filter(d=>d.hasYao).length+'</span>';
   const resultsEl=document.getElementById('results');
   if(!data.length){resultsEl.innerHTML='<div class="empty"><div style="font-size:3rem">🔍</div><div>没有找到匹配数据</div></div>';return;}
-  resultsEl.innerHTML=data.map((d,i)=>{
+  const cardHtml=(d,i)=>{
     const tags=[
       d.hasJiao?'<span class="tag t-jiao">✅ 精校</span>':'<span class="tag t-nojiao">❌ 无精校</span>',
       d.hasPingxi?'<span class="tag t-px">🫁 屏息</span>':'',
@@ -973,7 +977,22 @@ function render(){
       '<div class="drow"><span class="dkey">特殊子弹ID</span><span class="dval">'+(d.specialGunId||'—')+'</span></div>'+
       '<div class="drow"><span class="dkey">备注</span><span class="dval">'+d.note+'</span></div>'+
       '</div></div>';
-  }).join('');
+  };
+  // 分批渲染：一次只生成 PAGE_SIZE 张卡片，滚到底部再追加；筛选/统计/总数仍基于完整数据
+  RENDER_DATA=data; RENDER_CARD=cardHtml; RENDER_SHOWN=0;
+  resultsEl.innerHTML='';
+  renderMore();
+}
+function renderMore(){
+  const el=document.getElementById('results');
+  const old=document.getElementById('loadMore'); if(old){LOAD_OBSERVER.unobserve(old);old.remove();}
+  const next=RENDER_DATA.slice(RENDER_SHOWN,RENDER_SHOWN+PAGE_SIZE);
+  el.insertAdjacentHTML('beforeend',next.map((d,i)=>RENDER_CARD(d,RENDER_SHOWN+i)).join(''));
+  RENDER_SHOWN+=next.length;
+  if(RENDER_SHOWN<RENDER_DATA.length){
+    el.insertAdjacentHTML('beforeend','<div id="loadMore" onclick="renderMore()" style="text-align:center;padding:16px;color:var(--sub);font-size:.85rem;cursor:pointer">已显示 '+RENDER_SHOWN+' / '+RENDER_DATA.length+' 条，下拉或点击加载更多</div>');
+    LOAD_OBSERVER.observe(document.getElementById('loadMore'));
+  }
 }
 
 function toggleDetail(btn){const p=btn.closest('.gun-card').querySelector('.detail-panel');p.classList.toggle('open');btn.textContent=p.classList.contains('open')?'📖 收起':'📖 详情';}
