@@ -875,10 +875,20 @@ function renderZhishi(){
   if(currentZhishiFilter!=='all') data=data.filter(d=>String(d.price||'').trim()===currentZhishiFilter);
   if(count) count.textContent='共'+data.length+'条';
   if(!data.length){content.innerHTML='<div class="empty"><div style="font-size:3rem">🎖</div><div>暂无制式套数据</div></div>';return;}
-  content.innerHTML=data.map(d=>{
+  content.innerHTML=data.map((d,i)=>{
     const level=String(d.price||'').trim();
     const shortCode=String(d.code||'');
-    return `<div class="gun-card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><div style="font-weight:800;font-size:1rem">${d.gunName||'未知枪械'}</div><div style="margin-top:5px;color:var(--sub);font-size:.82rem">${level||'制式套'}${d.note?' · '+d.note:''}</div></div><button class="cbtn" onclick="copy('${shortCode.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}','改枪码')">复制</button></div><div style="margin-top:9px;font-family:monospace;font-size:.76rem;color:var(--sub);word-break:break-all">${shortCode}</div></div>`;
+    const esc=v=>String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    const hasId=d.gunId&&d.gunId!=='nan';
+    const slotId='zs-slot-'+i;
+    return `<div class="gun-card" style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><div><div style="font-weight:800;font-size:1rem">${d.gunName||'未知枪械'}</div><div style="margin-top:5px;color:var(--sub);font-size:.82rem">${level||'制式套'}${d.note?' · '+d.note:''}</div></div></div>`+
+      `<div class="code-block"><div class="code-label">🎮 改枪码</div><div class="code-box">${shortCode}</div></div>`+
+      (hasId?`<div class="code-block"><div class="code-label">🖥 压枪编码（ID）</div><div class="code-box">${d.gunId}</div></div>`:'')+
+      `<div class="card-actions"><button class="cbtn cbtn-code" onclick="copy('${esc(shortCode)}','改枪码')">📋 复制改枪码</button>`+
+      (hasId?`<button class="cbtn cbtn-id" onclick="copy('${esc(d.gunId)}','压枪编码（ID）')">📋 复制压枪编码</button>`+
+        `<select id="${slotId}" class="form-input" style="width:auto;padding:5px 8px"><option value="1">第1把</option><option value="2">第2把</option><option value="3">第3把</option><option value="4">第4把</option><option value="5">第5把</option><option value="6">第6把</option></select>`+
+        `<button class="cbtn cbtn-write" ${isConnected()?'':'disabled'} onclick="writeConfig('${esc(d.gunId)}',parseInt(document.getElementById('${slotId}').value),this)">⚡ 写入压枪器</button>`:'')+
+      `</div></div>`;
   }).join('');
 }
 
