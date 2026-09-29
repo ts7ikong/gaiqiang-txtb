@@ -1,5 +1,5 @@
 ﻿/*
- * 魔王S 腾讯文档同步助手 v9.0.5
+ * 魔王S 腾讯文档同步助手 v9.0.6
  *
  * 数据链路：opendoc -> block_datas[].related_sheet(Base64) -> zlib 解压 -> Protobuf -> 单元格网格 -> 业务记录
  * 字段号为逆向观察所得，与 TencentSheetParser.java 保持一致：
@@ -26,6 +26,11 @@
  *   说明文字（比如"此文档和前面S8一样通用改枪码..."）也会带到这三个字，导致说明行被误判成表头、
  *   之后所有字段全部读成空值。现在要求表头行必须同时出现"改枪码"列和至少一个价格/弹夹/备注列，
  *   单纯提一嘴"改枪码"的说明文字凑不出这个组合，不会再被当成表头。
+ *   v9.0.6 修复："定制烽火合集【FOV任意】"这张 sheet 里控枪编号列的表头文字本身又带着"改枪码"
+ *   三个字（"控枪编号越大改枪码越新"），被 detectHeader 的 code 分支先一步认领，真正的编号列
+ *   反而没有表头文字、且在文字左边而不是右边。原来 fixIdColumn 只会往右探一列（应对合并单元格
+ *   数值偏右的情况），碰到这种"值在左边"的布局完全找不到，导致这张表 3629/3635 条记录的
+ *   gunId 全部读空。现在改成候选列左右各探几列、取命中率最高的一列，不再只往一个方向找。
  *
  * 不读取、不上传 Cookie；请求使用当前腾讯文档页面的登录态。
  */
@@ -276,16 +281,24 @@
       return { headerRow: -1, map: { price: 1, note: 2, code: 3, date: 4, gunId: 9 } };
     }
 
-    /** 表头是合并单元格时，数值可能落在表头右侧一列，用前几行数据校正 */
+    /** 表头文字定位的列不一定就是真实数据列：合并单元格会让数值偏右一列；
+     * "合集"类 sheet 里还出现过表头行上"控枪编号"字样其实是旁边的说明文字
+     * （如"控枪编号越大改枪码越新"，因为同一格还带着"改枪码"三个字，被 detectHeader
+     * 的 code 分支先一步认领），真正带编号的列反而在说明文字左边、且自己没有表头文字。
+     * 用前几行数据实测候选列附近（左右各几列）的命中率，取命中最多的那一列，
+     * 越靠近原候选列的位置优先（命中数打平时不跳到更远的列）。 */
     function fixIdColumn(rows, headerRow, col) {
       if (col == null) return col;
       const sample = rows.filter(([r]) => r > headerRow).slice(0, 15);
-      let cur = 0, next = 0;
-      for (const [, cols] of sample) {
-        if (toId(cols.get(col))) cur++;
-        if (toId(cols.get(col + 1))) next++;
+      const hitCount = c => sample.reduce((n, [, cols]) => n + (toId(cols.get(c)) ? 1 : 0), 0);
+      let bestCol = col, bestCount = hitCount(col);
+      for (const offset of [1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]) {
+        const c = col + offset;
+        if (c < 0) continue;
+        const n = hitCount(c);
+        if (n > bestCount) { bestCount = n; bestCol = c; }
       }
-      return next > cur ? col + 1 : col;
+      return bestCol;
     }
 
     // 制式套/超丐专区这类区域在同一张 sheet 里另起了一套列布局(col1=简称 col2=等级/类型 col3=变体，
@@ -550,7 +563,7 @@
     return;
   }
 
-  const VERSION = '9.0.5';
+  const VERSION = '9.0.6';
   const LOCAL = 'http://localhost:8080';
   const PANEL_ID = 'mw-tencent-sync-panel';
   const DOC_ID = (location.pathname.match(/\/sheet\/([^/?]+)/) || [])[1];
